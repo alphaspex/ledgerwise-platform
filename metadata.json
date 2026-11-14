@@ -1,0 +1,6 @@
+{
+  "name": "Ledgerwise Sales Platform",
+  "description": "Frontend for the Ledgerwise AI SDR platform covering research, human review, outreach, conversations, and bookings.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

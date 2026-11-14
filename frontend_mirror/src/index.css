@@ -1,0 +1,7 @@
+/**
+ * Inputs :
+ *   - tailwind.config.ts tokens (canvas, navy, gold, slateblue)
+ * Outputs :
+ *   - global CSS: @tailwind base/components/utilities, body background bg-canvas, text color text-navy, font-sans, smooth scrolling, custom thin scrollbar
+ * File explanation : Global stylesheet and the only CSS file. Everything else is styled with Tailwind classes.
+ */

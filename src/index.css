@@ -1,0 +1,37 @@
+/**
+ * Inputs :
+ *   - tailwind.config.ts tokens (canvas, navy, gold, slateblue)
+ * Outputs :
+ *   - global CSS: Tailwind v4 + config tokens, body background bg-canvas, text color text-navy, font-sans, smooth scrolling, custom thin scrollbar
+ * File explanation : Root preview stylesheet adapted for Tailwind v4.
+ */
+
+@import "tailwindcss";
+@config "../tailwind.config.ts";
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-canvas text-navy font-sans antialiased;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #8D9BB8 #ECEEF1;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #ECEEF1;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: #8D9BB8;
+  border-radius: 9999px;
+}
