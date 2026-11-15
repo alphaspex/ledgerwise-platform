@@ -725,8 +725,16 @@ class Orchestrator:
     async def _send_worker(self, job: dict[str, Any]) -> dict[str, Any]:
         async with self._send_sem:
             message_id = int(job.get("message_id") or 0)
-            if job.get("do_not_contact") or not job.get("contact_email") or not job.get("message_body"):
-                return {"kind": "send", "queue_id": int(job["queue_id"]), "company_id": int(job["company_id"]), "result": {"status": "blocked_by_do_not_contact" if job.get("do_not_contact") else "failed", "message_id": message_id}}
+            if job.get("do_not_contact"):
+                status = "blocked_by_do_not_contact"
+            elif not job.get("contact_email") or not job.get("message_body"):
+                status = "failed"
+            elif job.get("sender_type") == "agent" and job.get("thread_state") in {"human_taken_over", "closed"}:
+                status = "failed"
+            else:
+                status = ""
+            if status:
+                return {"kind": "send", "queue_id": int(job["queue_id"]), "company_id": int(job["company_id"]), "result": {"status": status, "message_id": message_id}}
             try:
                 provider_id = await self.resend.send(
                     to=str(job["contact_email"]),
@@ -746,6 +754,11 @@ class Orchestrator:
             stop = bool(re.search(r"\b(stop|unsubscribe|not interested|remove me|don't contact|do not contact)\b", inbound, re.I))
             if stop or job.get("do_not_contact"):
                 return {"kind": "reply", "queue_id": int(job["queue_id"]), "company_id": int(job["company_id"]), "result": {"stop": True}}
+            if job.get("thread_state") in {"human_taken_over", "closed"}:
+                return {"kind": "reply", "queue_id": int(job["queue_id"]), "company_id": int(job["company_id"]), "result": {"cancelled": True}}
+            prospect_messages = [row for row in history if row.get("sender_type") == "prospect"]
+            if prospect_messages and int(prospect_messages[-1]["id"]) != int(job.get("message_id") or 0):
+                return {"kind": "reply", "queue_id": int(job["queue_id"]), "company_id": int(job["company_id"]), "result": {"cancelled": True}}
             safe_history = [
                 {"sender": row.get("sender_type"), "body": row.get("body")}
                 for row in history[-self.settings.reply_context_window:]
