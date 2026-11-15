@@ -107,7 +107,7 @@ def create_app() -> FastAPI:
     @application.middleware("http")
     async def rate_limit(request, call_next):
         auth_paths = {
-            "/auth/login", "/auth/change-password", "/auth/forgot-password",
+            "/auth/login", "/auth/change-password", "/auth/change-password/confirm", "/auth/forgot-password",
             "/auth/reset-password", "/auth/accept-invite",
         }
         rate_class = "auth" if request.url.path in auth_paths else "global"
