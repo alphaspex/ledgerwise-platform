@@ -264,7 +264,6 @@ class MemoryFact(WireModel):
 
 class Memory(WireModel):
     facts: list[MemoryFact]
-    audit: dict[str, Any] | None = None
 
 
 class CompanySummary(WireModel):
