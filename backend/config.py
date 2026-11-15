@@ -2,9 +2,7 @@
 # Outputs: Settings, get_settings(), and validated runtime configuration values.
 # Explanation: Centralizes typed runtime configuration for D1, Meta Muse, JWT, Resend, Apollo, Cal.com, workers, and limits.
 from functools import lru_cache
-from typing import List
-
-from pydantic import Field, field_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,7 +10,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False)
 
     app_env: str = "development"
-    cors_origins: List[str] = Field(default_factory=list)
+    cors_origins: str = ""
 
     cloudflare_account_id: str = ""
     cloudflare_database_id: str = ""
@@ -84,14 +82,9 @@ class Settings(BaseSettings):
     prompt_version: str = "ledgerwise-v1"
     icp_prompt: str = ""
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def parse_origins(cls, value):
-        if value is None or value == "":
-            return []
-        if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
-        return value
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     def validate_runtime(self) -> None:
         required = {
