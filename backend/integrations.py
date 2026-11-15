@@ -79,15 +79,28 @@ class MuseClient:
     async def close(self) -> None:
         await self.client.aclose()
 
-    async def generate(self, prompt: str, use_search: bool = True, max_output_tokens: int | None = None) -> dict[str, Any]:
+    async def generate(
+        self,
+        prompt: str | None = None,
+        use_search: bool = True,
+        max_output_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        previous_response_id: str | None = None,
+        input_override: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": self.settings.muse_model,
-            "input": prompt,
+            "input": input_override if input_override is not None else (prompt or ""),
             "reasoning": {"effort": self.settings.muse_reasoning_effort},
             "max_output_tokens": max_output_tokens or self.settings.muse_max_output_tokens,
         }
+        supplied_tools = list(tools or [])
         if use_search:
-            payload["tools"] = [{"type": "web_search"}]
+            supplied_tools.insert(0, {"type": "web_search"})
+        if supplied_tools:
+            payload["tools"] = supplied_tools
+        if previous_response_id:
+            payload["previous_response_id"] = previous_response_id
         response = await self.client.post("/responses", json=payload)
         response.raise_for_status()
         data = response.json()
@@ -98,12 +111,13 @@ class MuseClient:
                 for part in item.get("content", []):
                     if part.get("type") == "output_text":
                         text_parts.append(str(part.get("text", "")))
-            elif item.get("type") == "function_call":
+            elif item.get("type") == "function_call" and item.get("status", "completed") == "completed":
                 function_calls.append(item)
         usage = data.get("usage", {}) or {}
         return {
             "text": "\n".join(text_parts).strip(),
             "function_calls": function_calls,
+            "response_id": data.get("id"),
             "input_tokens": int(usage.get("input_tokens", 0) or 0),
             "output_tokens": int(usage.get("output_tokens", 0) or 0),
             "raw": data,
