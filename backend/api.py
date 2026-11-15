@@ -670,8 +670,10 @@ async def inbound_email_webhook(request: Request, x_webhook_signature: str | Non
     sender = parseaddr(str(data.get("from") or data.get("sender") or ""))[1].lower()
     reply_to = parseaddr(str(data.get("reply_to") or data.get("replyTo") or ""))[1].lower()
     text = str(data.get("text") or data.get("text_body") or data.get("html") or "")
-    target = reply_to or sender
-    found = rows(await _db(request).query("SELECT id FROM companies WHERE lower(contact_email)=?", [target]))
+    found = rows(await _db(request).query(
+        "SELECT id FROM companies WHERE lower(contact_email)=? OR lower(contact_email)=? ORDER BY CASE WHEN lower(contact_email)=? THEN 0 ELSE 1 END LIMIT 1",
+        [reply_to, sender, reply_to],
+    ))
     if not found:
         return {"ok": True}
     company_id = int(found[0]["id"])
