@@ -338,10 +338,16 @@ class Orchestrator:
                         "sql": "INSERT INTO module_2_queue(type,company_id,message_id,state) VALUES ('send',?,last_insert_rowid(),'pending')",
                         "params": [int(company_id)],
                     })
+                    booking = result.get("booking")
+                    if booking:
+                        write_statements.append({
+                            "sql": "INSERT INTO bookings(company_id,cal_booking_uid,scheduled_at,status,source) VALUES (?,?,?,'booked','agent') ON CONFLICT(cal_booking_uid) DO NOTHING",
+                            "params": [int(company_id), booking["uid"], booking["scheduled_at"]],
+                        })
                     if result.get("needs_human"):
                         write_statements.extend([
                             {"sql": "UPDATE companies SET thread_state='needs_human',updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [int(company_id)]},
-                            {"sql": "INSERT INTO notifications(company_id,reason,body) VALUES (?,'unsure_answer',?)", "params": [int(company_id), "The agent escalated this conversation for human review."]},
+                            {"sql": "INSERT INTO notifications(company_id,reason,body) VALUES (?,'unsure_answer',?)", "params": [int(company_id), result.get("human_reason") or "The agent escalated this conversation for human review."]},
                         ])
 
         for candidate in apollo_candidates:
@@ -660,21 +666,135 @@ class Orchestrator:
                 {"sender": row.get("sender_type"), "body": row.get("body")}
                 for row in history[-self.settings.reply_context_window:]
             ]
-            response = await self.muse.generate(
+            tools = [
+                {
+                    "type": "function",
+                    "name": "check_availability",
+                    "description": "Check available Ledgerwise meeting slots for the next two weeks. Use before offering or booking a time.",
+                    "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+                },
+                {
+                    "type": "function",
+                    "name": "book_slot",
+                    "description": "Book one available meeting slot for this prospect. Only use a slot returned by check_availability.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"start_time": {"type": "string", "description": "Exact ISO date-time returned by check_availability"}},
+                        "required": ["start_time"],
+                        "additionalProperties": False,
+                    },
+                },
+                {
+                    "type": "function",
+                    "name": "call_human",
+                    "description": "Escalate the conversation to a human when the answer is uncertain or the prospect asks for a person.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"reason": {"type": "string"}},
+                        "required": ["reason"],
+                        "additionalProperties": False,
+                    },
+                },
+            ]
+            prompt = (
                 "Reply to the prospect as Ledgerwise's AI assistant. Be honest that you are an AI if asked. "
                 "Never quote prices. Every factual claim must be supported by verified company memory or research. "
-                "Do not invent details. If unsure, write one brief handoff sentence and mark needs_human=true. "
+                "Do not invent details. Use check_availability before offering a meeting time; use book_slot only "
+                "with an exact returned slot. If a slot was taken, check availability again and retry one time only. "
+                "If booking still fails, share the configured public booking link when available. If unsure or asked "
+                "for a person, call call_human and provide one brief handoff sentence. Do not reply to stop signals. "
                 f"Maximum {self.settings.reply_max_words} words. Contact role: {job.get('contact_role')}. "
                 f"Verified memory: {_json(_load(job.get('memory'), {'facts': []}))}. "
-                f"Conversation: {_json(safe_history)}. Latest prospect message: {inbound}",
-                use_search=False,
+                f"Conversation: {_json(safe_history)}. Latest prospect message: {inbound}"
             )
-            body = response["text"].strip()
-            needs_human = "let me bring in a colleague" in body.lower()
+            response = await self.muse.generate(prompt, use_search=False, tools=tools)
+            tool_calls: list[dict[str, Any]] = []
+            booking: dict[str, Any] | None = None
+            needs_human = False
+            human_reason: str | None = None
+            book_attempts = 0
+            for _ in range(5):
+                function_calls = response.get("function_calls", [])
+                if not function_calls:
+                    break
+                outputs = []
+                for call in function_calls:
+                    name = str(call.get("name") or "")
+                    try:
+                        args = json.loads(call.get("arguments") or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        args = {}
+                    result: dict[str, Any]
+                    if name == "check_availability":
+                        try:
+                            slots = await self.calcom.check_availability()
+                            result = {"success": True, "slots": slots}
+                        except Exception:
+                            result = {"success": False, "error": "availability_unavailable"}
+                    elif name == "book_slot":
+                        book_attempts += 1
+                        start_time = str(args.get("start_time") or "")
+                        try:
+                            booked = await self.calcom.book_slot(
+                                start_time=start_time,
+                                email=str(job.get("contact_email") or ""),
+                                name=str(job.get("contact_name") or ("Contact at " + str(job.get("domain") or "company"))),
+                            ) if start_time else {"success": False, "error": "missing_start_time"}
+                        except Exception:
+                            booked = {"success": False, "error": "booking_unavailable"}
+                        result = booked
+                        if booked.get("success") and booked.get("uid"):
+                            booking = {"uid": str(booked["uid"]), "scheduled_at": start_time}
+                        elif booked.get("error") == "slot_taken" and book_attempts < 2:
+                            try:
+                                result["available_slots"] = await self.calcom.check_availability()
+                            except Exception:
+                                result["available_slots"] = []
+                        elif not booked.get("success"):
+                            result["booking_link"] = self.settings.calcom_public_booking_url or None
+                    elif name == "call_human":
+                        needs_human = True
+                        human_reason = str(args.get("reason") or "A human response was requested.")
+                        result = {"success": True, "handoff": True}
+                    else:
+                        result = {"success": False, "error": "unknown_tool"}
+                    tool_calls.append({"name": name, "args": args, "result": result})
+                    outputs.append({
+                        "type": "function_call_output",
+                        "call_id": str(call.get("call_id") or ""),
+                        "output": _json(result),
+                    })
+                response_id = response.get("response_id")
+                if not response_id or not outputs:
+                    break
+                response = await self.muse.generate(
+                    use_search=False,
+                    tools=tools,
+                    previous_response_id=str(response_id),
+                    input_override=outputs,
+                )
+            body = response.get("text", "").strip()
+            needs_human = needs_human or "let me bring in a colleague" in body.lower()
+            if not body:
+                body = "Thanks for your message. Let me bring in a colleague to help with this."
+                needs_human = True
+                human_reason = human_reason or "The agent could not prepare a safe response."
             if len(body.split()) > self.settings.reply_max_words:
                 body = "Thanks for your message. Let me bring in a colleague to help with this."
                 needs_human = True
-            return {"kind": "reply", "queue_id": int(job["queue_id"]), "company_id": int(job["company_id"]), "result": {"body": body, "needs_human": needs_human, "tool_calls": []}}
+                human_reason = human_reason or "The generated reply exceeded the response limit."
+            return {
+                "kind": "reply",
+                "queue_id": int(job["queue_id"]),
+                "company_id": int(job["company_id"]),
+                "result": {
+                    "body": body,
+                    "needs_human": needs_human,
+                    "human_reason": human_reason,
+                    "tool_calls": tool_calls,
+                    "booking": booking,
+                },
+            }
 
     async def _resolve_waiters(self, completions: list[tuple[int, str]]) -> None:
         for message_id, status in completions:
