@@ -98,8 +98,8 @@ def create_app() -> FastAPI:
     )
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins or ["*"],
-        allow_credentials=bool(settings.cors_origins),
+        allow_origins=settings.cors_origin_list or ["*"],
+        allow_credentials=bool(settings.cors_origin_list),
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Webhook-Signature", "X-Cal-Signature-256"],
     )
@@ -134,7 +134,5 @@ def create_app() -> FastAPI:
     application.include_router(router)
     return application
 
-
-from .security import SlidingWindowRateLimiter
 
 app = create_app()
