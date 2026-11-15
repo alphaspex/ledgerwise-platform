@@ -101,7 +101,7 @@ class MuseClient:
             payload["tools"] = supplied_tools
         if previous_response_id:
             payload["previous_response_id"] = previous_response_id
-        response = await self.client.post("/responses", json=payload)
+        response = await self.client.post("responses", json=payload)
         response.raise_for_status()
         data = response.json()
         text_parts: list[str] = []
@@ -156,7 +156,7 @@ class ResendClient:
         if headers:
             payload["headers"] = headers
         response = await self.client.post(
-            "/emails", json=payload, headers={"Idempotency-Key": idempotency_key}
+            "emails", json=payload, headers={"Idempotency-Key": idempotency_key}
         )
         response.raise_for_status()
         body = response.json()
@@ -206,7 +206,7 @@ class ApolloClient:
             return {"outcome": "disabled", "candidates": []}
         await self.gate.wait()
         search = await self.client.post(
-            "/mixed_people/api_search",
+            "mixed_people/api_search",
             json={
                 "q_organization_domains_list": [normalize_domain(domain)],
                 "person_titles": ROLE_TITLES["founder"] + ROLE_TITLES["coo"] + ROLE_TITLES["finance"],
@@ -248,7 +248,7 @@ class ApolloClient:
             return {"outcome": "not_found", "candidates": candidates}
         await self.gate.wait()
         match = await self.client.post(
-            "/people/match",
+            "people/match",
             json={"id": candidate["id"], "reveal_personal_emails": False},
         )
         match.raise_for_status()
@@ -300,7 +300,7 @@ class CalComClient:
         start = datetime.now(timezone.utc)
         end = start + timedelta(days=self.settings.calcom_avail_days_ahead)
         response = await self.client.get(
-            "/slots",
+            "slots",
             params={
                 "eventTypeId": self.settings.calcom_event_type_id,
                 "start": start.isoformat(),
@@ -320,7 +320,7 @@ class CalComClient:
 
     async def book_slot(self, start_time: str, email: str, name: str) -> dict[str, Any]:
         response = await self.client.post(
-            "/bookings",
+            "bookings",
             json={
                 "eventTypeId": int(self.settings.calcom_event_type_id),
                 "start": start_time,
