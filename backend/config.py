@@ -1,4 +1,4 @@
-# Inputs: process environment variables and optional backend/.env values parsed by Pydantic Settings.
+# Inputs: process environment variables and optional repository-root .env values parsed by Pydantic Settings.
 # Outputs: Settings, get_settings(), and validated runtime configuration values.
 # Explanation: Centralizes typed runtime configuration for D1, Meta Muse, JWT, Resend, Apollo, Cal.com, workers, and limits.
 from functools import lru_cache
