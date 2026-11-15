@@ -203,9 +203,10 @@ async def _get_code_user(request: Request, email: str, purpose: str) -> tuple[di
 async def _check_code(request: Request, user_id: int, code_row: dict[str, Any], code: str) -> None:
     expiry = str(code_row["expires_at"])
     try:
-        expired = datetime.fromisoformat(expiry.replace("Z", "+00:00")) <= datetime.now(timezone.utc)
-        if datetime.fromisoformat(expiry).tzinfo is None:
-            expired = datetime.fromisoformat(expiry).replace(tzinfo=timezone.utc) <= datetime.now(timezone.utc)
+        expires_at = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        expired = expires_at <= datetime.now(timezone.utc)
     except ValueError:
         expired = True
     if expired or int(code_row.get("attempts", 0)) >= _settings(request).code_max_attempts:
@@ -341,7 +342,7 @@ async def invite_user(body: InviteRequest, request: Request, admin: dict[str, An
     await _db(request).batch([
         {"sql": "INSERT INTO users(email,password_hash,is_admin) VALUES (?,?,0)", "params": [body.email, _new_user_hash(settings)]},
         {"sql": "INSERT INTO password_codes(user_id,code_hash,purpose,attempts,expires_at) VALUES (last_insert_rowid(),?,'invite',0,datetime('now',?))", "params": [hash_code(code), f"+{settings.invite_exp_seconds} seconds"]},
-        {"sql": "INSERT INTO auth_events(user_id,event,ip,user_agent) VALUES (last_insert_rowid(),'invite_sent',?,?)", "params": [_ip(request), request.headers.get("user-agent")]},
+        {"sql": "INSERT INTO auth_events(user_id,event,ip,user_agent) SELECT id,'invite_sent',?,? FROM users WHERE email=? COLLATE NOCASE", "params": [_ip(request), request.headers.get("user-agent"), body.email]},
     ])
     created = rows(await _db(request).query("SELECT id,email,is_admin,created_at FROM users WHERE email=? COLLATE NOCASE", [body.email]))
     if not created:
@@ -376,10 +377,6 @@ async def start_research(body: StartResearchRequest, request: Request, user: dic
     created = rows(result)
     if not created:
         raise HTTPException(status_code=409, detail="A research run is already running or paused")
-    await _db(request).query(
-        "UPDATE module_1_queues SET version=version+1,system_status=? WHERE id=1",
-        [json.dumps({"run_id": int(created[0]["id"]), "counts": {}, "progress": {"search_jobs": 0}, "tokens": {"in": 0, "out": 0}, "searches": 0})],
-    )
     return ResearchRun(id=int(created[0]["id"]), status=created[0]["status"], selection=created[0]["selection"], target_approved=int(created[0]["target_approved"]), created_at=_iso(created[0]["created_at"]))
 
 
@@ -542,6 +539,8 @@ async def get_thread(company_id: int, request: Request, user: dict[str, Any] = D
         raise HTTPException(status_code=404, detail="Thread not found")
     messages = rows(await _db(request).query("SELECT * FROM thread_messages WHERE company_id=? ORDER BY id", [company_id]))
     row = found[0]
+    if not messages or row.get("last_message_at") is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
     summary = _thread_summary(row)
     return ThreadDetail(summary=summary, messages=[_message(message) for message in messages])
 
@@ -567,11 +566,10 @@ async def send_human_reply(company_id: int, body: HumanReplyRequest, request: Re
     if company["thread_state"] != "human_taken_over" or _bool(company["do_not_contact"]):
         raise HTTPException(status_code=409, detail="Thread not taken over, or do_not_contact is set")
     created = await _db(request).batch([
-        {"sql": "INSERT INTO thread_messages(company_id,sender_type,body,status) VALUES (?,'human',?,'approved')", "params": [company_id, body.body]},
+        {"sql": "INSERT INTO thread_messages(company_id,sender_type,body,status) VALUES (?,'human',?,'approved') RETURNING *", "params": [company_id, body.body]},
         {"sql": "INSERT INTO module_2_queue(type,company_id,message_id,state) VALUES ('send',?,last_insert_rowid(),'pending')", "params": [company_id]},
-        {"sql": "SELECT * FROM thread_messages WHERE id=last_insert_rowid()"},
     ])
-    message_rows = rows(created[2])
+    message_rows = rows(created[0])
     if not message_rows:
         raise HTTPException(status_code=422, detail="Could not queue human reply")
     message = message_rows[0]
