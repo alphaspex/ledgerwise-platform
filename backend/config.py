@@ -1,6 +1,6 @@
-# Inputs: process environment variables and optional repository-root .env values parsed by Pydantic Settings.
+# Inputs: process environment variables and optional .env values (str, int, bool), with built-in non-secret configuration defaults of matching types.
 # Outputs: Settings, get_settings(), and validated runtime configuration values.
-# Explanation: Centralizes typed runtime configuration for D1, Meta Muse, JWT, Resend, Apollo, Cal.com, workers, and limits.
+# Explanation: Centralizes typed runtime configuration for D1, Meta Muse, JWT, Resend, Apollo, Cal.com, workers, and limits; environment values override built-in defaults.
 from functools import lru_cache
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -9,11 +9,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False)
 
-    app_env: str = "development"
-    cors_origins: str = ""
+    app_env: str = "production"
+    cors_origins: str = "https://ledgerwise-frontend.vercel.app"
 
-    cloudflare_account_id: str = ""
-    cloudflare_database_id: str = ""
+    cloudflare_account_id: str = "ad2f9bcb89b0518e9160277fa7467f8d"
+    cloudflare_database_id: str = "4dfb5080-1a5a-4725-8bc5-43614cefcdcb"
     cloudflare_api_token: str = ""
     d1_api_base_url: str = "https://api.cloudflare.com/client/v4"
 
@@ -31,14 +31,14 @@ class Settings(BaseSettings):
     code_max_attempts: int = 3
     code_length: int = 6
     invite_exp_seconds: int = 259200
-    seed_admin_email: str = ""
+    seed_admin_email: str = "alphaspex@gmail.com"
     seed_admin_password: str = ""
     auth_events_retention_days: int = 30
 
     resend_api_key: str = ""
-    resend_from_email: str = ""
+    resend_from_email: str = "onboarding@resend.dev"
     resend_webhook_secret: str = ""
-    public_app_url: str = ""
+    public_app_url: str = "https://ledgerwise-frontend.vercel.app"
 
     apollo_enabled: bool = False
     apollo_api_key: str = ""
@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     apollo_api_base_url: str = "https://api.apollo.io/api/v1"
 
     calcom_api_key: str = ""
-    calcom_event_type_id: str = ""
+    calcom_event_type_id: str = "7921907"
     calcom_api_base_url: str = "https://api.cal.com/v2"
     calcom_webhook_secret: str = ""
     calcom_public_booking_url: str = ""
