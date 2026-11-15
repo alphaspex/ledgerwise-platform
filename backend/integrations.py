@@ -305,7 +305,9 @@ class CalComClient:
                 "eventTypeId": self.settings.calcom_event_type_id,
                 "start": start.isoformat(),
                 "end": end.isoformat(),
+                "timeZone": "UTC",
             },
+            headers={"cal-api-version": "2024-09-04"},
         )
         response.raise_for_status()
         data = response.json()
@@ -331,6 +333,7 @@ class CalComClient:
                     "language": "en",
                 },
             },
+            headers={"cal-api-version": "2024-08-13"},
         )
         if response.status_code == 409:
             return {"success": False, "error": "slot_taken"}
