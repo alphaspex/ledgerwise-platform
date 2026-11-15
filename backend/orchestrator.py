@@ -132,10 +132,18 @@ class Orchestrator:
         human_queue = _load(queue_row.get("human_review_queue"), [])
         system_status = _load(queue_row.get("system_status"), {})
         domains = [str(row["domain"]) for row in rows(read_results[3])]
+        queue_changed = False
         if reconcile and len(read_results) > 9:
             system_status["counts"] = {str(row["status"]): int(row["total"]) for row in rows(read_results[9])}
         if run and system_status.get("run_id") != int(run["id"]):
-            system_status = {"run_id": int(run["id"]), "counts": system_status.get("counts", {}), "progress": {"search_jobs": 0}, "tokens": {"in": 0, "out": 0}, "searches": 0}
+            current_counts = system_status.get("counts", {})
+            system_status = {
+                "run_id": int(run["id"]),
+                "counts": current_counts,
+                "progress": {"search_jobs": 0},
+                "tokens": {"in": 0, "out": 0},
+                "searches": 0,
+            }
             queue_changed = True
         pending_companies = rows(read_results[4])
         m2_pending = rows(read_results[5])
@@ -161,7 +169,6 @@ class Orchestrator:
                     item["state"] = "pending" if item["attempts"] < self.settings.max_attempts else "dropped"
                 item["claimed_at"] = None
 
-        queue_changed = False
         for company in pending_companies:
             company_id = int(company["id"])
             has_research = bool(company.get("research_data"))
