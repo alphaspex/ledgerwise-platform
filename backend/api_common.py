@@ -2,6 +2,10 @@
 # Outputs: shared request helpers, serializers, authentication helpers, and route routers.
 # Explanation: Keeps backend.api.router stable while route handlers live in focused modules.
 from __future__ import annotations
+
+__all__ = [
+    "_db", "_settings", "_now", "_iso", "_json_load", "_bool", "_ip",
+]
 from datetime import datetime, timezone
 from typing import Any
 from fastapi import Request

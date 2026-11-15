@@ -2,6 +2,11 @@
 # Outputs: shared request helpers, serializers, authentication helpers, and route routers.
 # Explanation: Keeps backend.api.router stable while route handlers live in focused modules.
 from __future__ import annotations
+
+__all__ = [
+    "_user", "_user_summary", "_reason_preview", "_company_summary",
+    "_company_detail", "_message", "_thread_summary",
+]
 from typing import Any
 from .models import AuthUser, UserSummary, CompanySummary, CompanyDetail, ThreadMessage, ThreadSummary
 from .api_common import _iso, _json_load, _bool
