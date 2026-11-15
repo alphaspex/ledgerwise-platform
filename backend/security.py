@@ -91,6 +91,7 @@ class SlidingWindowRateLimiter:
 AUTH_RATE_PATHS = {
     "/auth/login",
     "/auth/change-password",
+    "/auth/change-password/confirm",
     "/auth/forgot-password",
     "/auth/reset-password",
     "/auth/accept-invite",
