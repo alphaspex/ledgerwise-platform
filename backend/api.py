@@ -283,7 +283,11 @@ async def forgot_password(body: ForgotPasswordRequest, request: Request):
     found = rows(await _db(request).query("SELECT id,email FROM users WHERE email=? COLLATE NOCASE", [body.email]))
     if found:
         code = new_code(_settings(request).code_length)
-        await _send_code(request, str(found[0]["email"]), int(found[0]["id"]), "reset", code, _settings(request).code_exp_seconds)
+        try:
+            await _send_code(request, str(found[0]["email"]), int(found[0]["id"]), "reset", code, _settings(request).code_exp_seconds)
+        except Exception:
+            # Keep the response identical for unknown accounts and provider failures.
+            pass
     return OkResponse(ok=True)
 
 
