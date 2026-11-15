@@ -225,6 +225,7 @@ class Orchestrator:
                     "sql": "UPDATE research_runs SET status='done' WHERE id=? AND status='running'",
                     "params": [int(run["id"])],
                 })
+                run["status"] = "done"
         for item in exhausted_enrichment:
             company_id = int(item["company_id"])
             write_statements.extend([
@@ -391,10 +392,21 @@ class Orchestrator:
             elif kind == "send":
                 status = result.get("status", "failed")
                 if status == "retry":
-                    write_statements.append({
-                        "sql": "UPDATE module_2_queue SET state='pending',attempts=attempts+1,claimed_at=NULL WHERE id=?",
-                        "params": [int(queue_id)],
-                    })
+                    attempts = int(next((q.get("attempts", 0) for q in m2_pending if int(q["queue_id"]) == int(queue_id)), 0)) + 1
+                    if attempts < self.settings.max_attempts:
+                        write_statements.append({
+                            "sql": "UPDATE module_2_queue SET state='pending',attempts=?,claimed_at=NULL WHERE id=?",
+                            "params": [attempts, int(queue_id)],
+                        })
+                    else:
+                        write_statements.extend([
+                            {"sql": "UPDATE thread_messages SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [int(result.get("message_id") or 0)]},
+                            {"sql": "UPDATE companies SET email_status='failed_contact',updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [int(company_id)]},
+                            {"sql": "UPDATE module_2_queue SET state='failed',attempts=?,claimed_at=NULL WHERE id=?", "params": [attempts, int(queue_id)]},
+                            {"sql": "INSERT INTO notifications(company_id,reason,body) VALUES (?,'contact_missing',?)", "params": [int(company_id), "Email delivery failed after the allowed retries."]},
+                        ])
+                        if result.get("message_id"):
+                            completion_signals.append((int(result["message_id"]), "failed"))
                 else:
                     write_statements.extend([
                         {"sql": "UPDATE thread_messages SET status=?,provider_message_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [status, result.get("provider_message_id"), int(result.get("message_id") or 0)]},
@@ -622,7 +634,7 @@ class Orchestrator:
             valid = (
                 int(data.get("company_id")) == int(company["id"])
                 and domain == normalize_domain(str(company["domain"]))
-                and isinstance(data.get("score"), int) and 0 <= data["score"] <= 10
+                and type(data.get("score")) is int and 0 <= data["score"] <= 10
                 and isinstance(reasons, list) and 1 <= len(reasons) <= 5
                 and all(isinstance(r, dict) and all(str(r.get(k, "")).strip() for k in ("text", "source_url", "quote")) for r in reasons)
                 and isinstance(urls, list)
