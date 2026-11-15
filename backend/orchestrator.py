@@ -188,6 +188,8 @@ class Orchestrator:
 
         for company in pending_companies:
             company_id = int(company["id"])
+            if not run or run.get("status") != "running":
+                continue
             if company_id in exhausted_ids or company_id in exhausted_url_ids:
                 continue
             has_research = bool(company.get("research_data"))
@@ -215,6 +217,14 @@ class Orchestrator:
 
         write_statements: list[dict[str, Any]] = []
         completion_signals: list[tuple[int, str]] = []
+        if reconcile and run and run.get("status") == "running":
+            current_counts = system_status.get("counts", {})
+            approved_total = int(current_counts.get("approved", 0)) + int(current_counts.get("human_approved", 0))
+            if approved_total >= int(run.get("target_approved") or self.settings.target_approved):
+                write_statements.append({
+                    "sql": "UPDATE research_runs SET status='done' WHERE id=? AND status='running'",
+                    "params": [int(run["id"])],
+                })
         for item in exhausted_enrichment:
             company_id = int(item["company_id"])
             write_statements.extend([
@@ -487,7 +497,7 @@ class Orchestrator:
             write_statements.append({"sql": "DELETE FROM auth_events WHERE created_at < datetime('now', ?)", "params": [f"-{self.settings.auth_events_retention_days} days"]})
 
         claimed_search = []
-        for item in search_queue:
+        for item in (search_queue if run and run.get("status") == "running" else []):
             if item.get("state") == "pending":
                 item["state"] = "processing"
                 item["claimed_at"] = _now()
@@ -496,7 +506,7 @@ class Orchestrator:
                 break
 
         claimed_enrichment = []
-        for item in enrichment_queue:
+        for item in (enrichment_queue if run and run.get("status") == "running" else []):
             if item.get("state") == "pending" and len(claimed_enrichment) < self.settings.llm_concurrency:
                 item["state"] = "processing"
                 item["claimed_at"] = _now()
@@ -504,7 +514,7 @@ class Orchestrator:
                 queue_changed = True
 
         claimed_urls = []
-        for item in url_queue:
+        for item in (url_queue if run and run.get("status") == "running" else []):
             if item.get("state") == "pending" and len(claimed_urls) < self.settings.http_concurrency:
                 item["state"] = "processing"
                 item["claimed_at"] = _now()
@@ -785,7 +795,7 @@ class Orchestrator:
             stop = bool(re.search(r"\b(stop|unsubscribe|not interested|remove me|don't contact|do not contact)\b", inbound, re.I))
             if stop or job.get("do_not_contact"):
                 return {"kind": "reply", "queue_id": int(job["queue_id"]), "company_id": int(job["company_id"]), "result": {"stop": True}}
-            if job.get("thread_state") in {"human_taken_over", "closed"}:
+            if job.get("thread_state") in {"human_taken_over", "needs_human", "closed"}:
                 return {"kind": "reply", "queue_id": int(job["queue_id"]), "company_id": int(job["company_id"]), "result": {"cancelled": True}}
             prospect_messages = [row for row in history if row.get("sender_type") == "prospect"]
             if prospect_messages and int(prospect_messages[-1]["id"]) != int(job.get("message_id") or 0):
