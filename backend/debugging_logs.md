@@ -26,3 +26,5 @@
 // orchestrator.py — Bug: Module 1 URL requests lacked per-host serialization and a one-second interval; human-approved companies were excluded from Module 2; old draft jobs could run after DNC. Fix tried: add per-host async locks and delay, include human_approved in candidate queries, and drop invalid draft queue rows before dispatch.
 // api.py — Bug: an existing account could produce a mail-provider error while an unknown account returned ok, exposing account existence through forgot-password. Fix tried: preserve the same ok response when sending the reset email fails.
 // app.py + security.py — Bug: /auth/change-password/confirm was assigned the global rate class instead of the auth limit. Fix tried: Add the endpoint path to both auth path sets. Worked: yes (verified both sets; full runtime tests remain pending).
+
+// integrations_muse.py + orchestrator.py — Bug: reasoning-token detail and non-research Muse calls were missing from persisted accounting. Fix tried: capture each Responses API usage object with worker context, store reasoning as an output-token subset, and persist every successful call in D1.

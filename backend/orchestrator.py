@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 import json
 import re
 import time
@@ -74,6 +75,9 @@ class Orchestrator:
         self.db = db
         self.settings = settings
         self.muse = muse
+        self._usage_context: ContextVar[dict[str, Any]] = ContextVar("ledgerwise_usage_context", default={})
+        self.usage_pending: list[dict[str, Any]] = []
+        self.muse.set_usage_callback(self._record_model_usage)
         self.resend = resend
         self.apollo = apollo
         self.calcom = calcom
@@ -96,6 +100,19 @@ class Orchestrator:
         self._host_locks: dict[str, asyncio.Lock] = {}
         self._host_last_request: dict[str, float] = {}
 
+    def _record_model_usage(self, usage: dict[str, Any]) -> None:
+        context = self._usage_context.get()
+        self.usage_pending.append({
+            "model": str(usage.get("model") or self.settings.muse_model),
+            "module": str(context.get("module") or "unattributed"),
+            "operation": str(context.get("operation") or "generate"),
+            "company_id": context.get("company_id"),
+            "run_id": context.get("run_id"),
+            "input_tokens": int(usage.get("input_tokens", 0) or 0),
+            "output_tokens": int(usage.get("output_tokens", 0) or 0),
+            "reasoning_tokens": int(usage.get("reasoning_tokens", 0) or 0),
+        })
+
     async def run_forever(self) -> None:
         while True:
             started = time.monotonic()
@@ -115,7 +132,7 @@ class Orchestrator:
             {"sql": "SELECT * FROM research_runs WHERE status IN ('running','paused') ORDER BY id DESC LIMIT 1"},
             {"sql": "SELECT domain FROM domain_memory ORDER BY created_at DESC LIMIT ?", "params": [self.settings.exclusion_prompt_limit]},
             {"sql": "SELECT * FROM companies WHERE status = 'pending' AND run_id=(SELECT id FROM research_runs WHERE status IN ('running','paused') ORDER BY id DESC LIMIT 1) ORDER BY id LIMIT 100"},
-            {"sql": "SELECT q.id AS queue_id,q.type,q.company_id,q.message_id,q.state,q.attempts,q.claimed_at,c.domain,c.status AS company_status,c.contact_email,c.contact_name,c.contact_role,c.contact_source,c.memory,c.research_data,c.email_status,c.thread_state,c.do_not_contact,tm.body AS message_body,tm.sender_type,tm.status AS message_status,tm.subject,tm.in_reply_to_message_id,(SELECT MAX(prospect.id) FROM thread_messages prospect WHERE prospect.company_id=c.id AND prospect.sender_type='prospect') AS latest_prospect_message_id FROM module_2_queue q JOIN companies c ON c.id=q.company_id LEFT JOIN thread_messages tm ON tm.id=q.message_id WHERE q.state='pending' ORDER BY q.id LIMIT 10"},
+            {"sql": "SELECT q.id AS queue_id,q.type,q.company_id,q.message_id,q.state,q.attempts,q.claimed_at,c.domain,c.run_id,c.status AS company_status,c.contact_email,c.contact_name,c.contact_role,c.contact_source,c.memory,c.research_data,c.email_status,c.thread_state,c.do_not_contact,tm.body AS message_body,tm.sender_type,tm.status AS message_status,tm.subject,tm.in_reply_to_message_id,(SELECT MAX(prospect.id) FROM thread_messages prospect WHERE prospect.company_id=c.id AND prospect.sender_type='prospect') AS latest_prospect_message_id FROM module_2_queue q JOIN companies c ON c.id=q.company_id LEFT JOIN thread_messages tm ON tm.id=q.message_id WHERE q.state='pending' ORDER BY q.id LIMIT 10"},
             {"sql": "SELECT * FROM (SELECT tm.*, ROW_NUMBER() OVER (PARTITION BY company_id ORDER BY id DESC) AS row_num FROM thread_messages tm WHERE company_id IN (SELECT DISTINCT company_id FROM module_2_queue WHERE state='pending' AND type='reply' ORDER BY company_id LIMIT 10)) WHERE row_num <= ? ORDER BY company_id,id", "params": [self.settings.reply_context_window]},
             {"sql": "SELECT c.id,c.domain FROM companies c WHERE c.status IN ('approved','human_approved') AND c.contact_email IS NULL AND c.do_not_contact=0 AND c.email_status='not_started' AND NOT EXISTS (SELECT 1 FROM module_2_queue q WHERE q.company_id=c.id AND q.type='draft' AND q.message_id IS NULL) ORDER BY c.id LIMIT 10"},
             {"sql": "SELECT c.id,c.domain,c.contact_email FROM companies c WHERE c.status IN ('approved','human_approved') AND c.contact_email IS NOT NULL AND c.do_not_contact=0 AND c.email_status='not_started' AND NOT EXISTS (SELECT 1 FROM module_2_queue q WHERE q.company_id=c.id AND q.type='draft' AND q.state IN ('pending','processing')) ORDER BY c.id LIMIT 10"},
@@ -276,14 +293,8 @@ class Orchestrator:
                         {"sql": "INSERT OR IGNORE INTO domain_memory(domain,status) SELECT domain,'pending' FROM companies WHERE domain=?", "params": [domain]},
                     ])
                 system_status["searches"] = int(system_status.get("searches", 0)) + 1
-                system_status["tokens"] = system_status.get("tokens", {"in": 0, "out": 0})
-                system_status["tokens"]["in"] = int(system_status["tokens"].get("in", 0)) + int(result.get("input_tokens", 0))
-                system_status["tokens"]["out"] = int(system_status["tokens"].get("out", 0)) + int(result.get("output_tokens", 0))
             elif kind == "enrichment":
                 entry = next((q for q in enrichment_queue if int(q.get("company_id", -1)) == int(company_id)), None)
-                system_status["tokens"] = system_status.get("tokens", {"in": 0, "out": 0})
-                system_status["tokens"]["in"] = int(system_status["tokens"].get("in", 0)) + int(result.get("input_tokens", 0))
-                system_status["tokens"]["out"] = int(system_status["tokens"].get("out", 0)) + int(result.get("output_tokens", 0))
                 if entry:
                     enrichment_queue.remove(entry)
                 queue_changed = True
@@ -545,12 +556,35 @@ class Orchestrator:
                 claimed_urls.append(item)
                 queue_changed = True
 
+        usage_batch = list(self.usage_pending)
+        for event in usage_batch:
+            write_statements.append({
+                "sql": "INSERT INTO model_usage(model,module,operation,company_id,run_id,input_tokens,output_tokens,reasoning_tokens) VALUES (?,?,?,?,?,?,?,?)",
+                "params": [
+                    event["model"], event["module"], event["operation"],
+                    event["company_id"], event["run_id"], event["input_tokens"],
+                    event["output_tokens"], event["reasoning_tokens"],
+                ],
+            })
+            if (
+                event["module"] == "research"
+                and run
+                and event.get("run_id") is not None
+                and int(event["run_id"]) == int(run["id"])
+            ):
+                token_counts = system_status.setdefault("tokens", {"in": 0, "out": 0})
+                token_counts["in"] = int(token_counts.get("in", 0)) + int(event["input_tokens"])
+                token_counts["out"] = int(token_counts.get("out", 0)) + int(event["output_tokens"])
+                queue_changed = True
+
         if queue_changed:
             write_statements.append({
                 "sql": "UPDATE module_1_queues SET version=version+1,search_queue=?,enrichment_queue=?,url_check_queue=?,human_review_queue=?,system_status=? WHERE id=1 AND version=?",
                 "params": [_json(search_queue), _json(enrichment_queue), _json(url_queue), _json(human_queue), _json(system_status), int(queue_row["version"])],
             })
         write_results = await self.db.batch(write_statements) if write_statements else []
+        if usage_batch:
+            del self.usage_pending[:len(usage_batch)]
         m1_committed = True
         if queue_changed:
             m1_index = len(write_statements) - 1
@@ -585,7 +619,30 @@ class Orchestrator:
         await self._resolve_waiters(completion_signals)
 
     def _dispatch(self, coroutine, name: str, failure_result: dict[str, Any] | None = None) -> None:
-        task = asyncio.create_task(coroutine, name=name)
+        frame = getattr(coroutine, "cr_frame", None)
+        local_values = frame.f_locals if frame else {}
+        worker_name = frame.f_code.co_name if frame else ""
+        job = local_values.get("job") or {}
+        company = local_values.get("company") or {}
+        run = local_values.get("run") or {}
+        usage_modules = {
+            "_search_worker": ("research", "search"),
+            "_enrichment_worker": ("research", "enrichment"),
+            "_draft_worker": ("outreach", "draft"),
+            "_reply_worker": ("conversations", "reply"),
+        }
+        module, operation = usage_modules.get(worker_name, ("unattributed", worker_name or "worker"))
+        context = {
+            "module": module,
+            "operation": operation,
+            "company_id": job.get("company_id") or company.get("id"),
+            "run_id": job.get("run_id") or run.get("id"),
+        }
+        token = self._usage_context.set(context)
+        try:
+            task = asyncio.create_task(coroutine, name=name)
+        finally:
+            self._usage_context.reset(token)
         self.inflight.add(task)
 
         def completed(done: asyncio.Task) -> None:

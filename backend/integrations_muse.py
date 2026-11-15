@@ -13,7 +13,7 @@ import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from email.utils import parseaddr
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 import httpx
@@ -24,11 +24,15 @@ import tldextract
 class MuseClient:
     def __init__(self, settings: Settings):
         self.settings = settings
+        self.usage_callback: Callable[[dict[str, Any]], None] | None = None
         self.client = httpx.AsyncClient(
             base_url=settings.muse_api_base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {settings.api_token}", "Content-Type": "application/json"},
             timeout=httpx.Timeout(60.0, connect=10.0),
         )
+
+    def set_usage_callback(self, callback: Callable[[dict[str, Any]], None] | None) -> None:
+        self.usage_callback = callback
 
     async def close(self) -> None:
         await self.client.aclose()
@@ -68,11 +72,24 @@ class MuseClient:
             elif item.get("type") == "function_call" and item.get("status", "completed") == "completed":
                 function_calls.append(item)
         usage = data.get("usage", {}) or {}
+        input_tokens = int(usage.get("input_tokens", 0) or 0)
+        output_tokens = int(usage.get("output_tokens", 0) or 0)
+        output_details = usage.get("output_tokens_details", {}) or {}
+        reasoning_tokens = int(output_details.get("reasoning_tokens", 0) or 0)
+        usage_record = {
+            "model": self.settings.muse_model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "reasoning_tokens": reasoning_tokens,
+        }
+        if self.usage_callback is not None:
+            self.usage_callback(usage_record)
         return {
             "text": "\n".join(text_parts).strip(),
             "function_calls": function_calls,
             "response_id": data.get("id"),
-            "input_tokens": int(usage.get("input_tokens", 0) or 0),
-            "output_tokens": int(usage.get("output_tokens", 0) or 0),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "reasoning_tokens": reasoning_tokens,
             "raw": data,
         }
