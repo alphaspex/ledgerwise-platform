@@ -848,6 +848,7 @@ class Orchestrator:
             response = await self.muse.generate(prompt, use_search=False, tools=tools)
             tool_calls: list[dict[str, Any]] = []
             booking: dict[str, Any] | None = None
+            available_start_times: set[str] = set()
             needs_human = False
             human_reason: str | None = None
             book_attempts = 0
@@ -866,28 +867,44 @@ class Orchestrator:
                     if name == "check_availability":
                         try:
                             slots = await self.calcom.check_availability()
+                            available_start_times = {
+                                str(slot.get("start") or slot.get("startTime") or slot.get("time"))
+                                for slot in slots
+                                if slot.get("start") or slot.get("startTime") or slot.get("time")
+                            }
                             result = {"success": True, "slots": slots}
                         except Exception:
                             result = {"success": False, "error": "availability_unavailable"}
                     elif name == "book_slot":
                         book_attempts += 1
                         start_time = str(args.get("start_time") or "")
-                        try:
-                            booked = await self.calcom.book_slot(
-                                start_time=start_time,
-                                email=str(job.get("contact_email") or ""),
-                                name=str(job.get("contact_name") or ("Contact at " + str(job.get("domain") or "company"))),
-                            ) if start_time else {"success": False, "error": "missing_start_time"}
-                        except Exception:
-                            booked = {"success": False, "error": "booking_unavailable"}
+                        if not start_time:
+                            booked = {"success": False, "error": "missing_start_time"}
+                        elif start_time not in available_start_times:
+                            booked = {"success": False, "error": "slot_not_returned_by_availability_check"}
+                        else:
+                            try:
+                                booked = await self.calcom.book_slot(
+                                    start_time=start_time,
+                                    email=str(job.get("contact_email") or ""),
+                                    name=str(job.get("contact_name") or ("Contact at " + str(job.get("domain") or "company"))),
+                                )
+                            except Exception:
+                                booked = {"success": False, "error": "booking_unavailable"}
                         result = booked
                         if booked.get("success") and booked.get("uid"):
                             booking = {"uid": str(booked["uid"]), "scheduled_at": start_time}
                         elif booked.get("error") == "slot_taken" and book_attempts < 2:
                             try:
                                 result["available_slots"] = await self.calcom.check_availability()
+                                available_start_times = {
+                                    str(slot.get("start") or slot.get("startTime") or slot.get("time"))
+                                    for slot in result["available_slots"]
+                                    if slot.get("start") or slot.get("startTime") or slot.get("time")
+                                }
                             except Exception:
                                 result["available_slots"] = []
+                                available_start_times = set()
                         elif not booked.get("success"):
                             result["booking_link"] = self.settings.calcom_public_booking_url or None
                     elif name == "call_human":
