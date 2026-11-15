@@ -113,7 +113,7 @@ class Orchestrator:
             {"sql": "SELECT * FROM research_runs WHERE status IN ('running','paused') ORDER BY id DESC LIMIT 1"},
             {"sql": "SELECT domain FROM domain_memory ORDER BY created_at DESC LIMIT ?", "params": [self.settings.exclusion_prompt_limit]},
             {"sql": "SELECT * FROM companies WHERE status = 'pending' AND run_id=(SELECT id FROM research_runs WHERE status IN ('running','paused') ORDER BY id DESC LIMIT 1) ORDER BY id LIMIT 100"},
-            {"sql": "SELECT q.id AS queue_id,q.type,q.company_id,q.message_id,q.state,q.attempts,q.claimed_at,c.domain,c.status AS company_status,c.contact_email,c.contact_name,c.contact_role,c.contact_source,c.memory,c.research_data,c.email_status,c.thread_state,c.do_not_contact,tm.body AS message_body,tm.sender_type,tm.status AS message_status,tm.subject FROM module_2_queue q JOIN companies c ON c.id=q.company_id LEFT JOIN thread_messages tm ON tm.id=q.message_id WHERE q.state='pending' ORDER BY q.id LIMIT 10"},
+            {"sql": "SELECT q.id AS queue_id,q.type,q.company_id,q.message_id,q.state,q.attempts,q.claimed_at,c.domain,c.status AS company_status,c.contact_email,c.contact_name,c.contact_role,c.contact_source,c.memory,c.research_data,c.email_status,c.thread_state,c.do_not_contact,tm.body AS message_body,tm.sender_type,tm.status AS message_status,tm.subject,tm.in_reply_to_message_id,(SELECT MAX(prospect.id) FROM thread_messages prospect WHERE prospect.company_id=c.id AND prospect.sender_type='prospect') AS latest_prospect_message_id FROM module_2_queue q JOIN companies c ON c.id=q.company_id LEFT JOIN thread_messages tm ON tm.id=q.message_id WHERE q.state='pending' ORDER BY q.id LIMIT 10"},
             {"sql": "SELECT * FROM (SELECT tm.*, ROW_NUMBER() OVER (PARTITION BY company_id ORDER BY id DESC) AS row_num FROM thread_messages tm WHERE company_id IN (SELECT DISTINCT company_id FROM module_2_queue WHERE state='pending' AND type='reply' ORDER BY company_id LIMIT 10)) WHERE row_num <= ? ORDER BY company_id,id", "params": [self.settings.reply_context_window]},
             {"sql": "SELECT c.id,c.domain FROM companies c WHERE c.status='approved' AND c.contact_email IS NULL AND c.do_not_contact=0 AND c.email_status='not_started' AND NOT EXISTS (SELECT 1 FROM module_2_queue q WHERE q.company_id=c.id AND q.type='draft' AND q.message_id IS NULL) ORDER BY c.id LIMIT 10"},
             {"sql": "SELECT c.id,c.domain,c.contact_email FROM companies c WHERE c.status='approved' AND c.contact_email IS NOT NULL AND c.do_not_contact=0 AND c.email_status='not_started' AND NOT EXISTS (SELECT 1 FROM module_2_queue q WHERE q.company_id=c.id AND q.type='draft' AND q.state IN ('pending','processing')) ORDER BY c.id LIMIT 10"},
@@ -435,8 +435,9 @@ class Orchestrator:
                         {"sql": "INSERT INTO notifications(company_id,reason,body) VALUES (?,'do_not_contact',?)", "params": [int(company_id), "Prospect requested no further contact."]},
                     ])
                 elif result.get("body"):
+                    inbound_message_id = int(next((q.get("message_id") for q in m2_pending if int(q["queue_id"]) == int(queue_id)), 0) or 0)
                     write_statements.extend([
-                        {"sql": "INSERT INTO thread_messages(company_id,sender_type,body,status,tool_calls) VALUES (?,'agent',?,'approved',?)", "params": [int(company_id), result["body"], _json(result.get("tool_calls", []))]},
+                        {"sql": "INSERT INTO thread_messages(company_id,sender_type,body,status,tool_calls,in_reply_to_message_id) VALUES (?,'agent',?,'approved',?,?)", "params": [int(company_id), result["body"], _json(result.get("tool_calls", [])), inbound_message_id or None]},
                     ])
                     write_statements.append({
                         "sql": "INSERT INTO module_2_queue(type,company_id,message_id,state) VALUES ('send',?,last_insert_rowid(),'pending')",
@@ -780,9 +781,17 @@ class Orchestrator:
             message_id = int(job.get("message_id") or 0)
             if job.get("do_not_contact"):
                 status = "blocked_by_do_not_contact"
+            elif job.get("message_status") != "approved":
+                status = "failed"
             elif not job.get("contact_email") or not job.get("message_body"):
                 status = "failed"
             elif job.get("sender_type") == "agent" and job.get("thread_state") in {"human_taken_over", "closed"}:
+                status = "failed"
+            elif (
+                job.get("sender_type") == "agent"
+                and job.get("in_reply_to_message_id") is not None
+                and int(job.get("latest_prospect_message_id") or 0) != int(job["in_reply_to_message_id"])
+            ):
                 status = "failed"
             else:
                 status = ""
