@@ -206,22 +206,31 @@ class ApolloClient:
         people = search_data.get("people", []) or []
         candidates = []
         for person in people:
+            organization = person.get("organization") or {}
+            raw_org_domain = organization.get("primary_domain") or organization.get("website_url")
+            organization_domain = ""
+            if raw_org_domain:
+                try:
+                    organization_domain = normalize_domain(str(raw_org_domain))
+                except ValueError:
+                    organization_domain = ""
             candidates.append({
                 "id": str(person.get("id", "")),
                 "name": " ".join(part for part in [person.get("first_name"), person.get("last_name")] if part),
                 "title": str(person.get("title") or ""),
-                "organization_domain": normalize_domain(
-                    (person.get("organization") or {}).get("primary_domain")
-                    or (person.get("organization") or {}).get("website_url")
-                    or domain
-                ),
+                "role": infer_contact_role(str(person.get("title") or "")),
+                "organization_domain": organization_domain,
             })
         if not candidates:
             return {"outcome": "not_found", "candidates": []}
         if len(candidates) > 1:
             return {"outcome": "multiple", "candidates": candidates}
         candidate = candidates[0]
-        if not candidate["id"] or candidate["organization_domain"] != normalize_domain(domain):
+        if (
+            not candidate["id"]
+            or candidate["organization_domain"] != normalize_domain(domain)
+            or candidate["role"] == "unknown"
+        ):
             return {"outcome": "not_found", "candidates": candidates}
         await self.gate.wait()
         match = await self.client.post(
