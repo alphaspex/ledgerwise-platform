@@ -3,5 +3,5 @@
 <!-- Explanation: Records only debugging work; read this file before debugging any backend file. -->
 # Backend debugging log
 
-No debugging events recorded yet.
 // orchestrator.py — Bug: draft planning could enqueue duplicate work; search lacked active-run selection and exclusions; source URL decoding and claimed-job selection were inconsistent. Fix tried: correcting queue guards, passing current run and exclusions to search, and fixing the result/claim lifecycle. Worked: no.
+// api.py — Bug: research start violated the single-writer queue rule; human reply selected the wrong row after queue insertion; invitation audit used the password-code ID; code expiry handling could compare naive and aware datetimes. Fix tried: moving queue writes to the orchestrator, using RETURNING for message rows, selecting user IDs by email, and normalizing expiry timestamps. Worked: no.
