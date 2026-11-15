@@ -93,6 +93,8 @@ class Orchestrator:
         self._draft_sem = asyncio.Semaphore(settings.draft_concurrency)
         self._send_sem = asyncio.Semaphore(settings.send_concurrency)
         self._reply_sem = asyncio.Semaphore(settings.reply_concurrency)
+        self._host_locks: dict[str, asyncio.Lock] = {}
+        self._host_last_request: dict[str, float] = {}
 
     async def run_forever(self) -> None:
         while True:
@@ -115,8 +117,8 @@ class Orchestrator:
             {"sql": "SELECT * FROM companies WHERE status = 'pending' AND run_id=(SELECT id FROM research_runs WHERE status IN ('running','paused') ORDER BY id DESC LIMIT 1) ORDER BY id LIMIT 100"},
             {"sql": "SELECT q.id AS queue_id,q.type,q.company_id,q.message_id,q.state,q.attempts,q.claimed_at,c.domain,c.status AS company_status,c.contact_email,c.contact_name,c.contact_role,c.contact_source,c.memory,c.research_data,c.email_status,c.thread_state,c.do_not_contact,tm.body AS message_body,tm.sender_type,tm.status AS message_status,tm.subject,tm.in_reply_to_message_id,(SELECT MAX(prospect.id) FROM thread_messages prospect WHERE prospect.company_id=c.id AND prospect.sender_type='prospect') AS latest_prospect_message_id FROM module_2_queue q JOIN companies c ON c.id=q.company_id LEFT JOIN thread_messages tm ON tm.id=q.message_id WHERE q.state='pending' ORDER BY q.id LIMIT 10"},
             {"sql": "SELECT * FROM (SELECT tm.*, ROW_NUMBER() OVER (PARTITION BY company_id ORDER BY id DESC) AS row_num FROM thread_messages tm WHERE company_id IN (SELECT DISTINCT company_id FROM module_2_queue WHERE state='pending' AND type='reply' ORDER BY company_id LIMIT 10)) WHERE row_num <= ? ORDER BY company_id,id", "params": [self.settings.reply_context_window]},
-            {"sql": "SELECT c.id,c.domain FROM companies c WHERE c.status='approved' AND c.contact_email IS NULL AND c.do_not_contact=0 AND c.email_status='not_started' AND NOT EXISTS (SELECT 1 FROM module_2_queue q WHERE q.company_id=c.id AND q.type='draft' AND q.message_id IS NULL) ORDER BY c.id LIMIT 10"},
-            {"sql": "SELECT c.id,c.domain,c.contact_email FROM companies c WHERE c.status='approved' AND c.contact_email IS NOT NULL AND c.do_not_contact=0 AND c.email_status='not_started' AND NOT EXISTS (SELECT 1 FROM module_2_queue q WHERE q.company_id=c.id AND q.type='draft' AND q.state IN ('pending','processing')) ORDER BY c.id LIMIT 10"},
+            {"sql": "SELECT c.id,c.domain FROM companies c WHERE c.status IN ('approved','human_approved') AND c.contact_email IS NULL AND c.do_not_contact=0 AND c.email_status='not_started' AND NOT EXISTS (SELECT 1 FROM module_2_queue q WHERE q.company_id=c.id AND q.type='draft' AND q.message_id IS NULL) ORDER BY c.id LIMIT 10"},
+            {"sql": "SELECT c.id,c.domain,c.contact_email FROM companies c WHERE c.status IN ('approved','human_approved') AND c.contact_email IS NOT NULL AND c.do_not_contact=0 AND c.email_status='not_started' AND NOT EXISTS (SELECT 1 FROM module_2_queue q WHERE q.company_id=c.id AND q.type='draft' AND q.state IN ('pending','processing')) ORDER BY c.id LIMIT 10"},
             {"sql": "SELECT q.id AS queue_id,q.type,q.company_id,q.message_id,q.attempts,c.domain,c.contact_email FROM module_2_queue q JOIN companies c ON c.id=q.company_id WHERE q.state='processing' AND q.claimed_at < ? ORDER BY q.id", "params": [(datetime.now(timezone.utc) - timedelta(seconds=self.settings.lease_seconds)).isoformat()]},
         ]
         if reconcile:
@@ -469,6 +471,15 @@ class Orchestrator:
 
         m2_claims = []
         for item in m2_pending:
+            if item.get("type") == "draft" and (
+                bool(item.get("do_not_contact"))
+                or item.get("company_status") not in {"approved", "human_approved"}
+            ):
+                write_statements.append({
+                    "sql": "UPDATE module_2_queue SET state='done',claimed_at=NULL WHERE id=? AND state='pending'",
+                    "params": [int(item["queue_id"])],
+                })
+                continue
             statement_index = len(write_statements)
             write_statements.append({
                 "sql": "UPDATE module_2_queue SET state='processing',claimed_at=? WHERE id=? AND state='pending'",
@@ -658,8 +669,26 @@ class Orchestrator:
             },
         }
 
+    async def _throttled_url_check(self, url: str) -> dict[str, Any]:
+        host = normalize_domain(url)
+        lock = self._host_locks.setdefault(host, asyncio.Lock())
+        async with lock:
+            previous = self._host_last_request.get(host)
+            if previous is not None:
+                delay = max(0.0, 1.0 - (time.monotonic() - previous))
+                if delay:
+                    await asyncio.sleep(delay)
+            self._host_last_request[host] = time.monotonic()
+            return await asyncio.to_thread(
+                check_url,
+                url,
+                self.settings.url_timeout_seconds,
+                self.settings.max_redirects,
+            )
+
     async def _url_worker(self, job: dict[str, Any], company: dict[str, Any]) -> dict[str, Any]:
-        domain_result = await asyncio.to_thread(check_url, f"https://{company['domain']}/", self.settings.url_timeout_seconds, self.settings.max_redirects)
+        async with self._http_sem:
+            domain_result = await self._throttled_url_check(f"https://{company['domain']}/")
         status = domain_result.get("status")
         error = domain_result.get("error")
         if status in {400, 404, 410} or error == "nxdomain":
@@ -682,7 +711,6 @@ class Orchestrator:
             except ValueError:
                 pass
         if bucket == 3:
-            sem = self._http_sem
             urls = list(dict.fromkeys(
                 str(item.get("source_url")) for item in existing.get("reasons", []) if item.get("source_url")
             ))
@@ -693,8 +721,8 @@ class Orchestrator:
             )
             source_rows = []
             for url in list(dict.fromkeys(urls))[: self.settings.max_source_urls]:
-                async with sem:
-                    checked = await asyncio.to_thread(check_url, url, self.settings.url_timeout_seconds, self.settings.max_redirects)
+                async with self._http_sem:
+                    checked = await self._throttled_url_check(url)
                 result = checked.get("result", "unverified")
                 if checked.get("error") == "nxdomain":
                     result = "dead"
