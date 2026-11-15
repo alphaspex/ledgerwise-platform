@@ -117,6 +117,7 @@ class Orchestrator:
             {"sql": "SELECT * FROM (SELECT tm.*, ROW_NUMBER() OVER (PARTITION BY company_id ORDER BY id DESC) AS row_num FROM thread_messages tm WHERE company_id IN (SELECT DISTINCT company_id FROM module_2_queue WHERE state='pending' AND type='reply' ORDER BY company_id LIMIT 10)) WHERE row_num <= ? ORDER BY company_id,id", "params": [self.settings.reply_context_window]},
             {"sql": "SELECT c.id,c.domain FROM companies c WHERE c.status='approved' AND c.contact_email IS NULL AND c.do_not_contact=0 AND c.email_status='not_started' AND NOT EXISTS (SELECT 1 FROM module_2_queue q WHERE q.company_id=c.id AND q.type='draft' AND q.message_id IS NULL) ORDER BY c.id LIMIT 10"},
             {"sql": "SELECT c.id,c.domain,c.contact_email FROM companies c WHERE c.status='approved' AND c.contact_email IS NOT NULL AND c.do_not_contact=0 AND c.email_status='not_started' AND NOT EXISTS (SELECT 1 FROM module_2_queue q WHERE q.company_id=c.id AND q.type='draft' AND q.state IN ('pending','processing')) ORDER BY c.id LIMIT 10"},
+            {"sql": "SELECT q.id AS queue_id,q.type,q.company_id,q.message_id,q.attempts,c.domain,c.contact_email FROM module_2_queue q JOIN companies c ON c.id=q.company_id WHERE q.state='processing' AND q.claimed_at < ? ORDER BY q.id", "params": [(datetime.now(timezone.utc) - timedelta(seconds=self.settings.lease_seconds)).isoformat()]},
         ]
         if reconcile:
             read_statements.append({
@@ -133,8 +134,8 @@ class Orchestrator:
         system_status = _load(queue_row.get("system_status"), {})
         domains = [str(row["domain"]) for row in rows(read_results[3])]
         queue_changed = False
-        if reconcile and len(read_results) > 9:
-            system_status["counts"] = {str(row["status"]): int(row["total"]) for row in rows(read_results[9])}
+        if reconcile and len(read_results) > 10:
+            system_status["counts"] = {str(row["status"]): int(row["total"]) for row in rows(read_results[10])}
         if run and system_status.get("run_id") != int(run["id"]):
             current_counts = system_status.get("counts", {})
             system_status = {
@@ -150,6 +151,7 @@ class Orchestrator:
         thread_rows = rows(read_results[6])
         apollo_candidates = rows(read_results[7])
         draft_candidates = rows(read_results[8])
+        stale_m2_rows = rows(read_results[9])
 
         if reconcile:
             processing_cutoff = (datetime.now(timezone.utc) - timedelta(seconds=self.settings.lease_seconds)).isoformat()
@@ -204,6 +206,17 @@ class Orchestrator:
             queue_id = item.get("queue_id")
             company_id = item.get("company_id")
             if kind == "search":
+                entry = next((q for q in search_queue if q.get("job_id") == queue_id), None)
+                if result.get("worker_error"):
+                    if entry:
+                        entry["attempts"] = int(entry.get("attempts", 0)) + 1
+                        if entry["attempts"] < self.settings.max_attempts:
+                            entry["state"] = "pending"
+                            entry["claimed_at"] = None
+                        else:
+                            search_queue = [q for q in search_queue if q.get("job_id") != queue_id]
+                    queue_changed = True
+                    continue
                 search_queue = [entry for entry in search_queue if entry.get("job_id") != queue_id]
                 queue_changed = True
                 for raw_domain in result.get("domains", [])[: self.settings.max_search_batch]:
@@ -230,7 +243,16 @@ class Orchestrator:
                 if entry:
                     enrichment_queue.remove(entry)
                 queue_changed = True
-                if result.get("valid"):
+                if result.get("worker_error"):
+                    attempts = int(entry.get("attempts", 0)) + 1 if entry else self.settings.max_attempts
+                    if attempts < self.settings.max_attempts:
+                        enrichment_queue.append({"company_id": int(company_id), "state": "pending", "attempts": attempts, "claimed_at": None})
+                    else:
+                        write_statements.extend([
+                            {"sql": "UPDATE companies SET status='failed_enrichment',updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [int(company_id)]},
+                            {"sql": "UPDATE domain_memory SET status='rejected' WHERE domain=(SELECT domain FROM companies WHERE id=?)", "params": [int(company_id)]},
+                        ])
+                elif result.get("valid"):
                     research = {
                         "reasons": result["reasons"],
                         "sources": [{"url": url, "result": "untested", "status": None} for url in result["source_urls"]],
@@ -253,6 +275,8 @@ class Orchestrator:
                 url_queue = [q for q in url_queue if int(q.get("company_id", -1)) != int(company_id)]
                 queue_changed = True
                 bucket = int(result.get("bucket", 2))
+                if result.get("worker_error"):
+                    bucket = 2
                 research = result.get("research_data", {})
                 if bucket == 1:
                     write_statements.extend([
@@ -274,6 +298,13 @@ class Orchestrator:
                         {"sql": "UPDATE domain_memory SET status=? WHERE domain=(SELECT domain FROM companies WHERE id=?)", "params": [domain_status, int(company_id)]},
                     ])
             elif kind == "apollo":
+                if result.get("worker_error"):
+                    attempts = int(next((q.get("attempts", 0) for q in m2_pending if int(q["queue_id"]) == int(queue_id)), 0)) + 1
+                    state = "pending" if attempts < self.settings.max_attempts else "failed"
+                    write_statements.append({"sql": "UPDATE module_2_queue SET state=?,attempts=?,claimed_at=NULL WHERE id=?", "params": [state, attempts, int(queue_id)]})
+                    if state == "failed":
+                        write_statements.append({"sql": "INSERT INTO notifications(company_id,reason,body) VALUES (?,'contact_missing',?)", "params": [int(company_id), "Apollo contact lookup failed repeatedly. Enter a contact manually."]})
+                    continue
                 if result.get("outcome") == "found":
                     write_statements.append({
                         "sql": "UPDATE companies SET contact_email=?,contact_name=?,contact_role=?,contact_source='apollo',updated_at=CURRENT_TIMESTAMP WHERE id=? AND contact_source IS NULL",
@@ -288,6 +319,16 @@ class Orchestrator:
                     })
                 write_statements.append({"sql": "UPDATE module_2_queue SET state='done',claimed_at=NULL WHERE id=?", "params": [int(queue_id)]})
             elif kind == "draft":
+                if result.get("worker_error"):
+                    attempts = int(next((q.get("attempts", 0) for q in m2_pending if int(q["queue_id"]) == int(queue_id)), 0)) + 1
+                    state = "pending" if attempts < self.settings.max_attempts else "failed"
+                    write_statements.append({"sql": "UPDATE module_2_queue SET state=?,attempts=?,claimed_at=NULL WHERE id=?", "params": [state, attempts, int(queue_id)]})
+                    if state == "failed":
+                        write_statements.extend([
+                            {"sql": "UPDATE companies SET email_status='failed_contact',updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [int(company_id)]},
+                            {"sql": "INSERT INTO notifications(company_id,reason,body) VALUES (?,'contact_missing',?)", "params": [int(company_id), "Email drafting failed after the allowed retries."]},
+                        ])
+                    continue
                 if result.get("memory_missing"):
                     write_statements.extend([
                         {"sql": "UPDATE companies SET memory=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [_json(result.get("memory", {"facts": [], "audit": {}})), int(company_id)]},
@@ -324,6 +365,16 @@ class Orchestrator:
                     if result.get("message_id"):
                         completion_signals.append((int(result["message_id"]), status))
             elif kind == "reply":
+                if result.get("worker_error"):
+                    attempts = int(next((q.get("attempts", 0) for q in m2_pending if int(q["queue_id"]) == int(queue_id)), 0)) + 1
+                    state = "pending" if attempts < self.settings.max_attempts else "failed"
+                    write_statements.append({"sql": "UPDATE module_2_queue SET state=?,attempts=?,claimed_at=NULL WHERE id=?", "params": [state, attempts, int(queue_id)]})
+                    if state == "failed":
+                        write_statements.extend([
+                            {"sql": "UPDATE companies SET thread_state='needs_human',updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [int(company_id)]},
+                            {"sql": "INSERT INTO notifications(company_id,reason,body) VALUES (?,'unsure_answer',?)", "params": [int(company_id), "Automatic reply failed after the allowed retries. Human review is required."]},
+                        ])
+                    continue
                 write_statements.append({"sql": "UPDATE module_2_queue SET state='done',claimed_at=NULL WHERE id=?", "params": [int(queue_id)]})
                 if result.get("stop"):
                     write_statements.extend([
@@ -376,6 +427,32 @@ class Orchestrator:
                 "sql": "UPDATE module_2_queue SET state=CASE WHEN attempts+1>=? THEN 'failed' ELSE 'pending' END,attempts=attempts+1,claimed_at=NULL WHERE state='processing' AND claimed_at < ?",
                 "params": [self.settings.max_attempts, (datetime.now(timezone.utc) - timedelta(seconds=self.settings.lease_seconds)).isoformat()],
             })
+            for stale in stale_m2_rows:
+                if int(stale.get("attempts", 0)) + 1 < self.settings.max_attempts:
+                    continue
+                stale_type = stale.get("type")
+                stale_company_id = int(stale["company_id"])
+                if stale_type == "send":
+                    message_id = int(stale.get("message_id") or 0)
+                    write_statements.extend([
+                        {"sql": "UPDATE thread_messages SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [message_id]},
+                        {"sql": "UPDATE companies SET email_status='failed_contact',updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [stale_company_id]},
+                        {"sql": "INSERT INTO notifications(company_id,reason,body) VALUES (?,'contact_missing',?)", "params": [stale_company_id, "Email delivery worker expired after the allowed retries."]},
+                    ])
+                    if message_id:
+                        completion_signals.append((message_id, "failed"))
+                elif stale_type == "draft" and stale.get("contact_email") is not None:
+                    write_statements.extend([
+                        {"sql": "UPDATE companies SET email_status='failed_contact',updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [stale_company_id]},
+                        {"sql": "INSERT INTO notifications(company_id,reason,body) VALUES (?,'contact_missing',?)", "params": [stale_company_id, "Email drafting worker expired after the allowed retries."]},
+                    ])
+                elif stale_type == "reply":
+                    write_statements.extend([
+                        {"sql": "UPDATE companies SET thread_state='needs_human',updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [stale_company_id]},
+                        {"sql": "INSERT INTO notifications(company_id,reason,body) VALUES (?,'unsure_answer',?)", "params": [stale_company_id, "Automatic reply worker expired after the allowed retries."]},
+                    ])
+                elif stale_type == "draft":
+                    write_statements.append({"sql": "INSERT INTO notifications(company_id,reason,body) VALUES (?,'contact_missing',?)", "params": [stale_company_id, "Apollo lookup worker expired; enter a contact manually."]})
             write_statements.append({"sql": "DELETE FROM auth_events WHERE created_at < datetime('now', ?)", "params": [f"-{self.settings.auth_events_retention_days} days"]})
 
         claimed_search = []
@@ -419,16 +496,16 @@ class Orchestrator:
 
         if queue_changed and m1_committed:
             for item in claimed_search:
-                self._dispatch(self._search_worker(item, run, domains), f"m1-search-{item['job_id']}")
+                self._dispatch(self._search_worker(item, run, domains), f"m1-search-{item['job_id']}", {"kind": "search", "queue_id": item["job_id"], "result": {"worker_error": True}})
             company_map = {int(c["id"]): c for c in pending_companies}
             for item in claimed_enrichment:
                 company = company_map.get(int(item["company_id"]))
                 if company:
-                    self._dispatch(self._enrichment_worker(item, company, run), f"m1-enrich-{item['company_id']}")
+                    self._dispatch(self._enrichment_worker(item, company, run), f"m1-enrich-{item['company_id']}", {"kind": "enrichment", "company_id": int(item["company_id"]), "result": {"worker_error": True}})
             for item in claimed_urls:
                 company = company_map.get(int(item["company_id"]))
                 if company:
-                    self._dispatch(self._url_worker(item, company), f"m1-url-{item['company_id']}")
+                    self._dispatch(self._url_worker(item, company), f"m1-url-{item['company_id']}", {"kind": "url_check", "company_id": int(item["company_id"]), "result": {"worker_error": True}})
 
         run_snapshot = dict(run) if run else None
         if run_snapshot:
@@ -442,7 +519,7 @@ class Orchestrator:
         }
         await self._resolve_waiters(completion_signals)
 
-    def _dispatch(self, coroutine, name: str) -> None:
+    def _dispatch(self, coroutine, name: str, failure_result: dict[str, Any] | None = None) -> None:
         task = asyncio.create_task(coroutine, name=name)
         self.inflight.add(task)
 
@@ -451,7 +528,14 @@ class Orchestrator:
             try:
                 self.finished.append(done.result())
             except Exception as exc:
-                self.finished.append({"kind": "worker_error", "error": str(exc)})
+                failure = dict(failure_result or {})
+                failure.setdefault("kind", "worker_error")
+                failure["error"] = str(exc)
+                if isinstance(failure.get("result"), dict):
+                    failure["result"] = {**failure["result"], "worker_error": True, "error": str(exc)}
+                else:
+                    failure["result"] = {"worker_error": True, "error": str(exc)}
+                self.finished.append(failure)
 
         task.add_done_callback(completed)
 
@@ -567,14 +651,14 @@ class Orchestrator:
 
     def _dispatch_m2(self, job: dict[str, Any], thread_rows: list[dict[str, Any]]) -> None:
         if job["type"] == "draft" and not job.get("contact_email"):
-            self._dispatch(self._apollo_worker(job), f"m2-apollo-{job['queue_id']}")
+            self._dispatch(self._apollo_worker(job), f"m2-apollo-{job['queue_id']}", {"kind": "apollo", "queue_id": int(job["queue_id"]), "company_id": int(job["company_id"]), "result": {"worker_error": True}})
         elif job["type"] == "draft":
-            self._dispatch(self._draft_worker(job), f"m2-draft-{job['queue_id']}")
+            self._dispatch(self._draft_worker(job), f"m2-draft-{job['queue_id']}", {"kind": "draft", "queue_id": int(job["queue_id"]), "company_id": int(job["company_id"]), "result": {"worker_error": True}})
         elif job["type"] == "send":
-            self._dispatch(self._send_worker(job), f"m2-send-{job['queue_id']}")
+            self._dispatch(self._send_worker(job), f"m2-send-{job['queue_id']}", {"kind": "send", "queue_id": int(job["queue_id"]), "company_id": int(job["company_id"]), "result": {"status": "retry", "message_id": int(job.get("message_id") or 0), "worker_error": True}})
         elif job["type"] == "reply":
             history = [row for row in thread_rows if int(row["company_id"]) == int(job["company_id"])]
-            self._dispatch(self._reply_worker(job, history), f"m2-reply-{job['queue_id']}")
+            self._dispatch(self._reply_worker(job, history), f"m2-reply-{job['queue_id']}", {"kind": "reply", "queue_id": int(job["queue_id"]), "company_id": int(job["company_id"]), "result": {"worker_error": True}})
 
     async def _apollo_worker(self, job: dict[str, Any]) -> dict[str, Any]:
         result = await self.apollo.lookup(str(job["domain"]))
