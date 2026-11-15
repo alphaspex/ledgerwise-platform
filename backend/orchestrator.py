@@ -112,7 +112,7 @@ class Orchestrator:
             {"sql": "SELECT * FROM module_1_queues WHERE id = 1"},
             {"sql": "SELECT * FROM research_runs WHERE status IN ('running','paused') ORDER BY id DESC LIMIT 1"},
             {"sql": "SELECT domain FROM domain_memory ORDER BY created_at DESC LIMIT ?", "params": [self.settings.exclusion_prompt_limit]},
-            {"sql": "SELECT * FROM companies WHERE status = 'pending' ORDER BY id LIMIT 100"},
+            {"sql": "SELECT * FROM companies WHERE status = 'pending' AND run_id=(SELECT id FROM research_runs WHERE status IN ('running','paused') ORDER BY id DESC LIMIT 1) ORDER BY id LIMIT 100"},
             {"sql": "SELECT q.id AS queue_id,q.type,q.company_id,q.message_id,q.state,q.attempts,q.claimed_at,c.domain,c.status AS company_status,c.contact_email,c.contact_name,c.contact_role,c.contact_source,c.memory,c.research_data,c.email_status,c.thread_state,c.do_not_contact,tm.body AS message_body,tm.sender_type,tm.status AS message_status,tm.subject FROM module_2_queue q JOIN companies c ON c.id=q.company_id LEFT JOIN thread_messages tm ON tm.id=q.message_id WHERE q.state='pending' ORDER BY q.id LIMIT 10"},
             {"sql": "SELECT * FROM (SELECT tm.*, ROW_NUMBER() OVER (PARTITION BY company_id ORDER BY id DESC) AS row_num FROM thread_messages tm WHERE company_id IN (SELECT DISTINCT company_id FROM module_2_queue WHERE state='pending' AND type='reply' ORDER BY company_id LIMIT 10)) WHERE row_num <= ? ORDER BY company_id,id", "params": [self.settings.reply_context_window]},
             {"sql": "SELECT c.id,c.domain FROM companies c WHERE c.status='approved' AND c.contact_email IS NULL AND c.do_not_contact=0 AND c.email_status='not_started' AND NOT EXISTS (SELECT 1 FROM module_2_queue q WHERE q.company_id=c.id AND q.type='draft' AND q.message_id IS NULL) ORDER BY c.id LIMIT 10"},
@@ -132,6 +132,11 @@ class Orchestrator:
         human_queue = _load(queue_row.get("human_review_queue"), [])
         system_status = _load(queue_row.get("system_status"), {})
         domains = [str(row["domain"]) for row in rows(read_results[3])]
+        if reconcile and len(read_results) > 9:
+            system_status["counts"] = {str(row["status"]): int(row["total"]) for row in rows(read_results[9])}
+        if run and system_status.get("run_id") != int(run["id"]):
+            system_status = {"run_id": int(run["id"]), "counts": system_status.get("counts", {}), "progress": {"search_jobs": 0}, "tokens": {"in": 0, "out": 0}, "searches": 0}
+            queue_changed = True
         pending_companies = rows(read_results[4])
         m2_pending = rows(read_results[5])
         thread_rows = rows(read_results[6])
@@ -142,7 +147,9 @@ class Orchestrator:
             processing_cutoff = (datetime.now(timezone.utc) - timedelta(seconds=self.settings.lease_seconds)).isoformat()
             expired = [
                 item for item in enrichment_queue + url_queue + search_queue
-                if item.get("state") == "processing" and str(item.get("claimed_at") or "") < processing_cutoff
+                if item.get("state") == "processing" and (
+                    self.tick_count == 1 or str(item.get("claimed_at") or "") < processing_cutoff
+                )
             ]
             for item in expired:
                 item["attempts"] = int(item.get("attempts", 0)) + 1
@@ -167,7 +174,7 @@ class Orchestrator:
         if run and run.get("status") == "running":
             counts = system_status.get("counts", {})
             approved = int(counts.get("approved", 0)) + int(counts.get("human_approved", 0))
-            pending = int(counts.get("pending", 0))
+            pending = max(int(counts.get("pending", 0)), len(pending_companies))
             deficit = int(run.get("target_approved") or self.settings.target_approved) - (approved + pending)
             if deficit > 0 and not search_queue and len(enrichment_queue) < 2 * self.settings.llm_concurrency:
                 search_queue.append({
@@ -180,15 +187,6 @@ class Orchestrator:
                 })
                 queue_changed = True
 
-        for candidate in apollo_candidates:
-            if self.settings.apollo_enabled:
-                exists = any(
-                    int(row["company_id"]) == int(candidate["id"]) and row["type"] == "draft" and row["message_id"] is None
-                    for row in m2_pending
-                )
-                if not exists:
-                    # The existing draft type is deliberately reused for Apollo contact lookup.
-                    pass
         write_statements: list[dict[str, Any]] = []
         completion_signals: list[tuple[int, str]] = []
         finished, self.finished = self.finished, []
@@ -219,6 +217,9 @@ class Orchestrator:
                 system_status["tokens"]["out"] = int(system_status["tokens"].get("out", 0)) + int(result.get("output_tokens", 0))
             elif kind == "enrichment":
                 entry = next((q for q in enrichment_queue if int(q.get("company_id", -1)) == int(company_id)), None)
+                system_status["tokens"] = system_status.get("tokens", {"in": 0, "out": 0})
+                system_status["tokens"]["in"] = int(system_status["tokens"].get("in", 0)) + int(result.get("input_tokens", 0))
+                system_status["tokens"]["out"] = int(system_status["tokens"].get("out", 0)) + int(result.get("output_tokens", 0))
                 if entry:
                     enrichment_queue.remove(entry)
                 queue_changed = True
@@ -252,10 +253,9 @@ class Orchestrator:
                         {"sql": "UPDATE domain_memory SET status='failed_404' WHERE domain=(SELECT domain FROM companies WHERE id=?)", "params": [int(company_id)]},
                     ])
                 elif bucket == 2:
-                    write_statements.extend([
-                        {"sql": "UPDATE companies SET status='needs_human_review',research_data=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [_json(research), int(company_id)]},
-                        {"sql": "INSERT INTO notifications(company_id,reason,body) VALUES (?,'contact_missing',?)", "params": [int(company_id), "Company domain could not be verified automatically; human review is required."]},
-                    ])
+                    write_statements.append(
+                        {"sql": "UPDATE companies SET status='needs_human_review',research_data=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [_json(research), int(company_id)]}
+                    )
                     if not any(int(q.get("company_id", -1)) == int(company_id) for q in human_queue):
                         human_queue.append({"company_id": int(company_id), "added_at": _now()})
                 else:
@@ -293,6 +293,12 @@ class Orchestrator:
                         {"sql": "INSERT INTO thread_messages(company_id,sender_type,body,status,subject) VALUES (?,'agent',?,'pending_review',?)", "params": [int(company_id), result["body"], "A quick question about " + str(result.get("domain", ""))]},
                         {"sql": "UPDATE module_2_queue SET state='done',claimed_at=NULL WHERE id=?", "params": [int(queue_id)]},
                     ])
+                else:
+                    write_statements.extend([
+                        {"sql": "UPDATE companies SET email_status='failed_contact',updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [int(company_id)]},
+                        {"sql": "INSERT INTO notifications(company_id,reason,body) VALUES (?,'contact_missing',?)", "params": [int(company_id), "The first email draft could not satisfy the required content rules."]},
+                        {"sql": "UPDATE module_2_queue SET state='failed',claimed_at=NULL WHERE id=?", "params": [int(queue_id)]},
+                    ])
             elif kind == "send":
                 status = result.get("status", "failed")
                 if status == "retry":
@@ -303,9 +309,11 @@ class Orchestrator:
                 else:
                     write_statements.extend([
                         {"sql": "UPDATE thread_messages SET status=?,provider_message_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [status, result.get("provider_message_id"), int(result.get("message_id") or 0)]},
-                        {"sql": "UPDATE companies SET email_status=CASE WHEN email_status IN ('approved','drafting','pending_review') THEN 'sent' ELSE email_status END,thread_state=CASE WHEN thread_state='inactive' THEN 'auto' ELSE thread_state END,updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [int(company_id)]},
-                        {"sql": "UPDATE module_2_queue SET state=?,claimed_at=NULL WHERE id=?", "params": ["done" if status == "sent" else "failed", int(queue_id)]},
+                        {"sql": "UPDATE companies SET email_status=CASE WHEN ?='sent' AND email_status IN ('approved','drafting','pending_review') THEN 'sent' WHEN ?='failed' AND email_status IN ('approved','drafting','pending_review') THEN 'failed_contact' ELSE email_status END,thread_state=CASE WHEN ?='sent' AND thread_state='inactive' THEN 'auto' ELSE thread_state END,updated_at=CURRENT_TIMESTAMP WHERE id=?", "params": [status, status, status, int(company_id)]},
+                        {"sql": "UPDATE module_2_queue SET state=?,claimed_at=NULL WHERE id=?", "params": ["done" if status in ("sent", "blocked_by_do_not_contact") else "failed", int(queue_id)]},
                     ])
+                    if status == "failed":
+                        write_statements.append({"sql": "INSERT INTO notifications(company_id,reason,body) VALUES (?,'contact_missing',?)", "params": [int(company_id), "Email delivery failed after the allowed retries."]})
                     if result.get("message_id"):
                         completion_signals.append((int(result["message_id"]), status))
             elif kind == "reply":
@@ -337,7 +345,7 @@ class Orchestrator:
                 })
         for candidate in draft_candidates:
             write_statements.append({
-                "sql": "INSERT INTO module_2_queue(type,company_id,message_id,state) SELECT 'draft',?,NULL,'pending' WHERE NOT EXISTS (SELECT 1 FROM module_2_queue WHERE company_id=? AND type='draft' AND state IN ('pending','processing') AND message_id IS NOT NULL)",
+                "sql": "INSERT INTO module_2_queue(type,company_id,message_id,state) SELECT 'draft',?,NULL,'pending' WHERE NOT EXISTS (SELECT 1 FROM module_2_queue WHERE company_id=? AND type='draft' AND state IN ('pending','processing'))",
                 "params": [int(candidate["id"]), int(candidate["id"])],
             })
 
@@ -357,13 +365,14 @@ class Orchestrator:
             })
             write_statements.append({"sql": "DELETE FROM auth_events WHERE created_at < datetime('now', ?)", "params": [f"-{self.settings.auth_events_retention_days} days"]})
 
+        claimed_search = []
         for item in search_queue:
             if item.get("state") == "pending":
                 item["state"] = "processing"
                 item["claimed_at"] = _now()
+                claimed_search.append(item)
                 queue_changed = True
                 break
-        claimed_search = [item for item in search_queue if item.get("state") == "processing" and item.get("claimed_at") and item.get("claimed_at") == search_queue[-1].get("claimed_at")][-1:] if search_queue else []
 
         claimed_enrichment = []
         for item in enrichment_queue:
@@ -381,11 +390,6 @@ class Orchestrator:
                 claimed_urls.append(item)
                 queue_changed = True
 
-        for item in search_queue:
-            if item.get("state") == "processing" and item.get("job_id") and item not in claimed_search and not any(t.get_name() == f"m1-search-{item['job_id']}" for t in self.inflight):
-                claimed_search = [item]
-                break
-
         if queue_changed:
             write_statements.append({
                 "sql": "UPDATE module_1_queues SET version=version+1,search_queue=?,enrichment_queue=?,url_check_queue=?,human_review_queue=?,system_status=? WHERE id=1 AND version=?",
@@ -402,22 +406,22 @@ class Orchestrator:
 
         if queue_changed and m1_committed:
             for item in claimed_search:
-                self._dispatch(self._search_worker(item), f"m1-search-{item['job_id']}")
+                self._dispatch(self._search_worker(item, run, domains), f"m1-search-{item['job_id']}")
             company_map = {int(c["id"]): c for c in pending_companies}
             for item in claimed_enrichment:
                 company = company_map.get(int(item["company_id"]))
                 if company:
-                    self._dispatch(self._enrichment_worker(item, company), f"m1-enrich-{item['company_id']}")
+                    self._dispatch(self._enrichment_worker(item, company, run), f"m1-enrich-{item['company_id']}")
             for item in claimed_urls:
                 company = company_map.get(int(item["company_id"]))
                 if company:
                     self._dispatch(self._url_worker(item, company), f"m1-url-{item['company_id']}")
 
-        if reconcile and len(read_results) > 9:
-            count_map = {str(row["status"]): int(row["total"]) for row in rows(read_results[9])}
-            system_status["counts"] = count_map
+        run_snapshot = dict(run) if run else None
+        if run_snapshot:
+            run_snapshot["created_at"] = _now() if not run_snapshot.get("created_at") else str(run_snapshot["created_at"]).replace(" ", "T") + ("Z" if "+" not in str(run_snapshot["created_at"]) else "")
         self.snapshot = {
-            "run": run,
+            "run": run_snapshot,
             "counts": system_status.get("counts", {}),
             "progress": {"search_jobs": len(search_queue)},
             "tokens": system_status.get("tokens", {"in": 0, "out": 0}),
@@ -438,13 +442,13 @@ class Orchestrator:
 
         task.add_done_callback(completed)
 
-    async def _search_worker(self, job: dict[str, Any]) -> dict[str, Any]:
+    async def _search_worker(self, job: dict[str, Any], run: dict[str, Any] | None, domains: list[str]) -> dict[str, Any]:
         async with self._llm_sem:
             prompt = (
                 "Search the live web for organizations matching this ideal-customer selection. "
                 f"Return JSON only: {{\"domains\":[\"example.com\"]}}. Find up to {int(job['n'])} "
                 "unique company domains. Exclude these already used domains: "
-                + _json([]) + ". Selection: " + str(job.get("selection", ""))
+                + _json(domains) + ". Selection: " + str((run or {}).get("selection", ""))
             )
             response = await self.muse.generate(prompt, use_search=True)
         data = _parse_json_object(response["text"]) or {}
@@ -463,13 +467,13 @@ class Orchestrator:
             },
         }
 
-    async def _enrichment_worker(self, job: dict[str, Any], company: dict[str, Any]) -> dict[str, Any]:
+    async def _enrichment_worker(self, job: dict[str, Any], company: dict[str, Any], run: dict[str, Any] | None) -> dict[str, Any]:
         async with self._llm_sem:
             prompt = (
                 "Research this company using live web search. Return JSON only with company_id, domain, "
                 "integer score 0..10, reasons (1-5 items each text/source_url/quote), and source_urls (max 5). "
                 "Quotes must be verbatim evidence. Never invent facts. "
-                f"company_id={company['id']} domain={company['domain']}. Selection={company.get('selection','')}"
+                f"company_id={company['id']} domain={company['domain']}. Selection={(run or {}).get('selection','')}"
             )
             response = await self.muse.generate(prompt, use_search=True)
         data = _parse_json_object(response["text"]) or {}
@@ -531,7 +535,11 @@ class Orchestrator:
             urls = list(dict.fromkeys(
                 str(item.get("source_url")) for item in existing.get("reasons", []) if item.get("source_url")
             ))
-            urls.extend(str(url) for url in existing.get("sources", []) if isinstance(url, str))
+            urls.extend(
+                str(item.get("url")) if isinstance(item, dict) else str(item)
+                for item in existing.get("sources", [])
+                if (isinstance(item, dict) and item.get("url")) or isinstance(item, str)
+            )
             source_rows = []
             for url in list(dict.fromkeys(urls))[: self.settings.max_source_urls]:
                 async with sem:
