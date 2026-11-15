@@ -1,0 +1,17 @@
+# Inputs: the repository root used as the Docker build context.
+# Outputs: only non-secret source and build files are available to Docker COPY instructions.
+# Explanation: Excludes credentials, local environments, VCS metadata, caches, and frontend dependencies from backend images.
+.git
+.github
+.venv
+venv
+node_modules
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/*.pyc
+.env
+.env.*
+**/.env
+**/.env.*
+**/.env*
