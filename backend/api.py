@@ -108,6 +108,8 @@ def _company_detail(row: dict[str, Any]) -> CompanyDetail:
     summary = _company_summary(row).model_dump()
     research = _json_load(row.get("research_data"), None)
     memory = _json_load(row.get("memory"), None)
+    if isinstance(memory, dict):
+        memory = {"facts": memory.get("facts", [])}
     summary.update({
         "run_id": int(row["run_id"]),
         "contact_source": row.get("contact_source"),
@@ -576,11 +578,17 @@ async def send_human_reply(company_id: int, body: HumanReplyRequest, request: Re
     orchestrator = request.app.state.orchestrator
     waiter = orchestrator.register_message_waiter(int(message["id"]))
     try:
-        final_status = await waiter
+        persisted = rows(await _db(request).query(
+            "SELECT * FROM thread_messages WHERE id=?",
+            [int(message["id"])],
+        ))
+        if persisted and persisted[0]["status"] != "approved":
+            message = persisted[0]
+        else:
+            message["status"] = await waiter
+            message["updated_at"] = _now()
     finally:
         orchestrator.release_message_waiter(int(message["id"]), waiter)
-    message["status"] = final_status
-    message["updated_at"] = _now()
     return _message(message)
 
 
