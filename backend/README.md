@@ -14,7 +14,7 @@ From the repository root:
 python -m venv .venv
 source .venv/bin/activate
 pip install -r backend/requirements.txt
-cp backend/.env.example backend/.env
+cp backend/.env.example .env
 uvicorn backend.app:app --host 0.0.0.0 --port 8000
 ```
 
@@ -92,7 +92,7 @@ Build from the repository root:
 
 ```bash
 docker build -f backend/Dockerfile -t ledgerwise-backend .
-docker run --env-file backend/.env -p 8000:8000 ledgerwise-backend
+docker run --env-file .env -p 8000:8000 ledgerwise-backend
 ```
 
 No external database, provider account, deployment target, or secret is created by these instructions.
