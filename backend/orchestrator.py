@@ -171,8 +171,25 @@ class Orchestrator:
                     item["state"] = "pending" if item["attempts"] < self.settings.max_attempts else "dropped"
                 item["claimed_at"] = None
 
+        exhausted_enrichment = [item for item in enrichment_queue if item.get("state") == "dropped"]
+        exhausted_urls = [item for item in url_queue if item.get("state") == "dropped"]
+        if exhausted_enrichment:
+            exhausted_ids = {int(item["company_id"]) for item in exhausted_enrichment}
+            enrichment_queue = [item for item in enrichment_queue if item.get("state") != "dropped"]
+            queue_changed = True
+        else:
+            exhausted_ids = set()
+        if exhausted_urls:
+            exhausted_url_ids = {int(item["company_id"]) for item in exhausted_urls}
+            url_queue = [item for item in url_queue if item.get("state") != "dropped"]
+            queue_changed = True
+        else:
+            exhausted_url_ids = set()
+
         for company in pending_companies:
             company_id = int(company["id"])
+            if company_id in exhausted_ids or company_id in exhausted_url_ids:
+                continue
             has_research = bool(company.get("research_data"))
             target_queue = url_queue if has_research else enrichment_queue
             exists = any(int(item.get("company_id", -1)) == company_id for item in target_queue)
@@ -198,6 +215,20 @@ class Orchestrator:
 
         write_statements: list[dict[str, Any]] = []
         completion_signals: list[tuple[int, str]] = []
+        for item in exhausted_enrichment:
+            company_id = int(item["company_id"])
+            write_statements.extend([
+                {"sql": "UPDATE companies SET status='failed_enrichment',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'", "params": [company_id]},
+                {"sql": "UPDATE domain_memory SET status='rejected' WHERE domain=(SELECT domain FROM companies WHERE id=?)", "params": [company_id]},
+            ])
+        for item in exhausted_urls:
+            company_id = int(item["company_id"])
+            write_statements.append({
+                "sql": "UPDATE companies SET status='needs_human_review',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'",
+                "params": [company_id],
+            })
+            if not any(int(existing.get("company_id", -1)) == company_id for existing in human_queue):
+                human_queue.append({"company_id": company_id, "added_at": _now()})
         finished, self.finished = self.finished, []
 
         for item in finished:
