@@ -6,8 +6,8 @@
  *   - usePolling(() => getThread(id)) -> ThreadDetail; takeoverThread(companyId: number): Promise<ThreadSummary>; sendHumanReply(companyId: number, body: HumanReplyRequest): Promise<ThreadMessage> (api/outreachApi.ts)
  *   - useAuthGuard(), useAsync, useToast hooks
  * Outputs :
- *   - JSX.Element (conversation detail; 404 or missing selectedThreadCompanyId returns to 'conversations'; Skeleton / ErrorState for other failures)
- * File explanation : Reads, takes over, and replies to one conversation; stale saved thread IDs return to the conversations list.
+ *   - JSX.Element (conversation history and controls plus conversation-specific AI usage totals; 404 returns to 'conversations')
+ * File explanation : Reads, takes over, and replies to one conversation; shows token and cost usage attributed to its automated replies.
  */
 
 import { useCallback, useEffect, useRef } from 'react';
@@ -113,6 +113,10 @@ export function ChatPage() {
     return null;
   }
 
+  const usageCostLabel = thread.usage.cost_complete && thread.usage.cost_usd !== null
+    ? `${thread.usage.cost_usd.toFixed(6)}`
+    : 'Unavailable (pricing not set for all calls)';
+
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)]">
       <PageHeader
@@ -126,6 +130,15 @@ export function ChatPage() {
           />
         }
       />
+
+      <div className="flex flex-wrap gap-x-4 gap-y-1 border-b border-line py-2 text-xs text-navy-mute">
+        <span>AI calls: {thread.usage.calls.toLocaleString()}</span>
+        <span>Input: {thread.usage.input_tokens.toLocaleString()}</span>
+        <span>Output: {thread.usage.output_tokens.toLocaleString()}</span>
+        <span>Reasoning: {thread.usage.reasoning_tokens.toLocaleString()}</span>
+        <span>Total: {thread.usage.total_tokens.toLocaleString()} tokens</span>
+        <span>Cost: {usageCostLabel}</span>
+      </div>
 
       <div className="flex-1 overflow-y-auto space-y-4 pr-1 py-2">
         {thread.messages.map((message) => (

@@ -6,6 +6,6 @@
  *   - usePolling(() => getCompany(id)) -> CompanyDetail (api/researchApi.ts)
  *   - useAuthGuard()
  * Outputs :
- *   - JSX.Element (company detail; 404 or missing selectedCompanyId returns to 'companies'; Skeleton / ErrorState for other failures)
- * File explanation : Shows one company's research evidence, verified memory, contact details, and status; stale saved company IDs return to the company list.
+ *   - JSX.Element (company evidence and contact details, per-company AI usage totals, and 404 recovery to 'companies'; Skeleton / ErrorState for other failures)
+ * File explanation : Shows verified company research, memory, contact state, and the AI tokens/cost attributed to that company.
  */

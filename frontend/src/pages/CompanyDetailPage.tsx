@@ -6,8 +6,8 @@
  *   - usePolling(() => getCompany(id)) -> CompanyDetail (api/researchApi.ts)
  *   - useAuthGuard()
  * Outputs :
- *   - JSX.Element (company detail; 404 or missing selectedCompanyId returns to 'companies'; Skeleton / ErrorState for other failures)
- * File explanation : Shows one company's research evidence, verified memory, contact details, and status; stale saved company IDs return to the company list.
+ *   - JSX.Element (company evidence and contact details, per-company AI usage totals, and 404 recovery to 'companies'; Skeleton / ErrorState for other failures)
+ * File explanation : Shows verified company research, memory, contact state, and the AI tokens/cost attributed to that company.
  */
 
 import { useCallback, useEffect } from 'react';
@@ -82,6 +82,10 @@ export function CompanyDetailPage() {
     return null;
   }
 
+  const usageCostLabel = company.usage.cost_complete && company.usage.cost_usd !== null
+    ? `${company.usage.cost_usd.toFixed(6)}`
+    : 'Unavailable (pricing not set for all calls)';
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -117,6 +121,20 @@ export function CompanyDetailPage() {
         <div className="text-navy-soft">Email: {company.contact_email ?? 'None'}</div>
         <div className="text-navy-soft">Role: {company.contact_role ?? 'Unknown'}</div>
         <div className="text-navy-mute text-xs">Source: {company.contact_source ?? 'N/A'}</div>
+      </Card>
+
+      <Card className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-navy">AI usage for this company</h2>
+          <span className="text-xs text-navy-mute">{company.usage.calls.toLocaleString()} calls</span>
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 text-sm">
+          <div><div className="text-xs text-navy-mute">Input tokens</div><div className="font-semibold text-navy">{company.usage.input_tokens.toLocaleString()}</div></div>
+          <div><div className="text-xs text-navy-mute">Output tokens</div><div className="font-semibold text-navy">{company.usage.output_tokens.toLocaleString()}</div></div>
+          <div><div className="text-xs text-navy-mute">Reasoning tokens</div><div className="font-semibold text-navy">{company.usage.reasoning_tokens.toLocaleString()}</div></div>
+          <div><div className="text-xs text-navy-mute">Total tokens</div><div className="font-semibold text-navy">{company.usage.total_tokens.toLocaleString()}</div></div>
+          <div><div className="text-xs text-navy-mute">Estimated cost</div><div className="font-semibold text-navy">{usageCostLabel}</div></div>
+        </div>
       </Card>
 
       {company.research_data ? (
