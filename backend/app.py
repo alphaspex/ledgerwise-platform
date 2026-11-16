@@ -37,8 +37,10 @@ async def lifespan(app: FastAPI):
     if has_d1:
         db = D1Client(settings)
         await db.open()
-        migration = Path(__file__).parent / "migrations" / "0001_init.sql"
-        await db.query(migration.read_text(encoding="utf-8"))
+        migrations_dir = Path(__file__).parent / "migrations"
+        for migration_name in ("0001_init.sql", "0002_model_usage.sql"):
+            migration = migrations_dir / migration_name
+            await db.query(migration.read_text(encoding="utf-8"))
         if settings.seed_admin_email and settings.seed_admin_password:
             await db.query(
                 "INSERT OR IGNORE INTO users(email,password_hash,is_admin) VALUES (?,?,1)",
