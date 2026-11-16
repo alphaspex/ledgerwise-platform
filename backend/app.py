@@ -1,5 +1,5 @@
 # Inputs: typed settings, FastAPI route handlers, optional D1 credentials, and integration environment variables.
-# Outputs: the ASGI FastAPI application with startup seeding, D1 migrations, sliding-window rate limits, and orchestrator lifecycle.
+# Outputs: the ASGI FastAPI application with startup seeding, D1 migrations 0001-0004, rate limits, and orchestrator lifecycle.
 # Explanation: Builds the application process and owns startup/shutdown resources; API route business logic remains in api.py.
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
         db = D1Client(settings)
         await db.open()
         migrations_dir = Path(__file__).parent / "migrations"
-        for migration_name in ("0001_init.sql", "0002_model_usage.sql", "0003_resend_inbound.sql"):
+        for migration_name in ("0001_init.sql", "0002_model_usage.sql", "0003_resend_inbound.sql", "0004_model_usage_cost.sql"):
             migration = migrations_dir / migration_name
             await db.query(migration.read_text(encoding="utf-8"))
         if settings.seed_admin_email and settings.seed_admin_password:
