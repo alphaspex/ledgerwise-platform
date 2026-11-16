@@ -28,3 +28,4 @@
 // app.py + security.py — Bug: /auth/change-password/confirm was assigned the global rate class instead of the auth limit. Fix tried: Add the endpoint path to both auth path sets. Worked: yes (verified both sets; full runtime tests remain pending).
 
 // integrations_muse.py + orchestrator.py — Bug: reasoning-token detail and non-research Muse calls were missing from persisted accounting. Fix tried: capture each Responses API usage object with worker context, store reasoning as an output-token subset, and persist every successful call in D1.
+// migrations/0001_init.sql + migrations/0002_model_usage.sql — Bug: usage schema was appended to the initial migration, which would not run on databases where migration 0001 was already applied. Fix tried: move model_usage and its indexes into a new forward-only migration 0002.
