@@ -204,3 +204,18 @@ def test_model_usage_totals_count_reasoning_with_output_once() -> None:
     assert usage.total_tokens == 80
     assert usage.cost_usd == 0.0005
     assert usage.cost_complete is True
+
+
+def test_model_usage_cost_migration_is_safe_to_replay() -> None:
+    from pathlib import Path
+
+    migration = (Path(__file__).resolve().parents[1] / "migrations" / "0004_model_usage_cost.sql").read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS model_usage_costs" in migration
+    assert "ALTER TABLE" not in migration
+
+
+def test_model_usage_persistence_uses_cost_side_table() -> None:
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "orchestrator_tick_commit.py").read_text(encoding="utf-8")
+    assert "INSERT INTO model_usage_costs(usage_id,cost_usd,pricing_version)" in source

@@ -42,10 +42,10 @@ async def _model_usage_summary(
     clauses: list[str] = []
     params: list[Any] = []
     if company_id is not None:
-        clauses.append("company_id=?")
+        clauses.append("u.company_id=?")
         params.append(company_id)
     if module is not None:
-        clauses.append("module=?")
+        clauses.append("u.module=?")
         params.append(module)
     where = " WHERE " + " AND ".join(clauses) if clauses else ""
     aggregate = (
@@ -53,16 +53,16 @@ async def _model_usage_summary(
         "COALESCE(SUM(input_tokens),0) AS input_tokens,"
         "COALESCE(SUM(output_tokens),0) AS output_tokens,"
         "COALESCE(SUM(reasoning_tokens),0) AS reasoning_tokens,"
-        "COUNT(cost_usd) AS priced_calls,SUM(cost_usd) AS cost_usd "
-        "FROM model_usage" + where
+        "COUNT(c.cost_usd) AS priced_calls,SUM(c.cost_usd) AS cost_usd "
+        "FROM model_usage u LEFT JOIN model_usage_costs c ON c.usage_id=u.id" + where
     )
     by_module = (
-        "SELECT module,COUNT(*) AS calls,"
+        "SELECT u.module AS module,COUNT(*) AS calls,"
         "COALESCE(SUM(input_tokens),0) AS input_tokens,"
         "COALESCE(SUM(output_tokens),0) AS output_tokens,"
         "COALESCE(SUM(reasoning_tokens),0) AS reasoning_tokens,"
         "COUNT(cost_usd) AS priced_calls,SUM(cost_usd) AS cost_usd "
-        "FROM model_usage" + where + " GROUP BY module ORDER BY module"
+        "FROM model_usage u LEFT JOIN model_usage_costs c ON c.usage_id=u.id" + where + " GROUP BY u.module ORDER BY u.module"
     )
     results = await db.batch([
         {"sql": aggregate, "params": params},

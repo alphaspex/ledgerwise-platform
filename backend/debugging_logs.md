@@ -43,3 +43,5 @@
 // orchestrator_core.py + orchestrator_tick_commit.py + config.py + migrations/0004_model_usage_cost.sql — Bug: per-call token usage had no durable optional cost fields, so spend could not be calculated from configured model rates. Fix tried: add versioned optional per-million input/output rates, persist nullable per-call USD cost, and count reasoning within output tokens only. Worked: pending.
 
 // api_usage.py + api_routes_dashboard.py + api_routes_research.py + api_routes_threads.py — Bug: persisted Muse token/cost events were not aggregated into dashboard, company, or conversation API responses. Fix tried: add D1 totals and per-module aggregation, expose typed usage summaries, and return unknown cost when any included calls are unpriced. Worked: pending.
+
+// migrations/0004_model_usage_cost.sql + orchestrator_tick_commit.py + api_usage.py — Bug: ALTER TABLE migration 0004 would fail on every later startup because the application replays migrations. Fix tried: replace repeated column alterations with an idempotent model_usage_costs table, persist cost rows by usage ID, and aggregate through a left join. Worked: pending.

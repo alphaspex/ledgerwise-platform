@@ -52,14 +52,18 @@ class TickCommitMixin:
         usage_batch = list(self.usage_pending)
         for event in usage_batch:
             write_statements.append({
-                "sql": "INSERT INTO model_usage(model,module,operation,company_id,run_id,input_tokens,output_tokens,reasoning_tokens,cost_usd,pricing_version) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "sql": "INSERT INTO model_usage(model,module,operation,company_id,run_id,input_tokens,output_tokens,reasoning_tokens) VALUES (?,?,?,?,?,?,?,?)",
                 "params": [
                     event["model"], event["module"], event["operation"],
                     event["company_id"], event["run_id"], event["input_tokens"],
                     event["output_tokens"], event["reasoning_tokens"],
-                    event.get("cost_usd"), event.get("pricing_version"),
                 ],
             })
+            if event.get("cost_usd") is not None and event.get("pricing_version"):
+                write_statements.append({
+                    "sql": "INSERT INTO model_usage_costs(usage_id,cost_usd,pricing_version) VALUES (last_insert_rowid(),?,?)",
+                    "params": [event["cost_usd"], event["pricing_version"]],
+                })
             if (
                 event["module"] == "research"
                 and run

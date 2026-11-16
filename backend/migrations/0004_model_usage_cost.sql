@@ -1,6 +1,10 @@
 -- Inputs: an existing Ledgerwise D1 database with model_usage records from migration 0002.
--- Outputs: nullable per-call USD cost and pricing-version columns for transparent model spend accounting.
--- Explanation: Adds optional cost metadata without changing historical token records or inventing prices for unpriced calls.
-ALTER TABLE model_usage ADD COLUMN cost_usd REAL;
-ALTER TABLE model_usage ADD COLUMN pricing_version TEXT;
-CREATE INDEX IF NOT EXISTS idx_model_usage_pricing_version ON model_usage(pricing_version, created_at);
+-- Outputs: an idempotent side table containing optional per-call USD cost and pricing version.
+-- Explanation: Adds versioned cost metadata without altering historical token rows; safe to replay on every application startup.
+CREATE TABLE IF NOT EXISTS model_usage_costs (
+  usage_id INTEGER PRIMARY KEY REFERENCES model_usage(id) ON DELETE CASCADE,
+  cost_usd REAL NOT NULL CHECK (cost_usd >= 0),
+  pricing_version TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_model_usage_cost_pricing_version
+  ON model_usage_costs(pricing_version);
