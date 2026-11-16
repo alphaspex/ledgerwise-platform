@@ -26,6 +26,11 @@ from .integrations import (
     registrable_domain,
 from .orchestrator_helpers import _json, _load
 
+from __future__ import annotations
+import re
+from typing import Any
+from .orchestrator_helpers import _json, _load, _parse_json_object
+
 class OutreachWorkersMixin:
     def _dispatch_m2(self, job: dict[str, Any], thread_rows: list[dict[str, Any]]) -> None:
         if job["type"] == "draft" and not job.get("contact_email"):

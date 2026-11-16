@@ -27,6 +27,13 @@ from .integrations import (
 from .orchestrator_helpers import _load
 from .integrations import check_url, normalize_domain, registrable_domain
 
+from __future__ import annotations
+import asyncio
+import time
+from typing import Any
+from .integrations import check_url, normalize_domain, registrable_domain
+from .orchestrator_helpers import _load
+
 class URLWorkersMixin:
     async def _throttled_url_check(self, url: str) -> dict[str, Any]:
         host = normalize_domain(url)

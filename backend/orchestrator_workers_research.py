@@ -26,6 +26,11 @@ from .integrations import (
     registrable_domain,
 from .orchestrator_helpers import _json, _load, _parse_json_object
 
+from __future__ import annotations
+from typing import Any
+from .integrations import normalize_domain
+from .orchestrator_helpers import _json, _parse_json_object
+
 class ResearchWorkersMixin:
     async def _search_worker(self, job: dict[str, Any], run: dict[str, Any] | None, domains: list[str]) -> dict[str, Any]:
         async with self._llm_sem:

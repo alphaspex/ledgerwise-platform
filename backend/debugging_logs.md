@@ -31,3 +31,5 @@
 // migrations/0001_init.sql + migrations/0002_model_usage.sql — Bug: usage schema was appended to the initial migration, which would not run on databases where migration 0001 was already applied. Fix tried: move model_usage and its indexes into a new forward-only migration 0002.
 // app.py — Bug: startup applied only migration 0001, so existing and new databases never created model_usage from migration 0002. Fix tried: apply 0001 then 0002 during D1 startup.
 // orchestrator_core.py — Bug: run_forever used time.monotonic without importing time after the orchestrator split. Fix tried: add the missing standard-library import.
+// orchestrator_workers_research.py + orchestrator_workers_outreach.py + orchestrator_workers_url.py — Bug: extracted modules retained a truncated multiline integrations import, making all three files invalid Python; outreach also lacked _parse_json_object. Fix tried: replace inherited imports with minimal complete module-specific imports.
+// api_common.py — Bug: _json_load referenced json without importing it after helper extraction. Fix tried: add the json import.
