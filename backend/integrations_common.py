@@ -1,9 +1,10 @@
-# Inputs: provider configuration and operation payloads for Meta Muse, Resend, Apollo, Cal.com, and URL checks.
-# Outputs: normalized provider responses, model usage, delivery identifiers, contact matches, bookings, and URL results.
-# Explanation: Exposes provider integrations through focused I/O-bound modules.
+# Inputs: provider configuration plus raw webhook bodies, signature headers, URLs, and provider request data.
+# Outputs: normalized provider helpers and verified webhook authenticity results.
+# Explanation: Provides shared parsing, domain, signature, and I/O-bound integration helpers.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
@@ -66,3 +67,23 @@ def verify_hmac_signature(raw_body: bytes, signature: str, secret: str, prefix: 
     supplied = signature.removeprefix(prefix).strip()
     expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(supplied, expected)
+
+
+def verify_svix_signature(raw_body: bytes, webhook_id: str | None, webhook_timestamp: str | None, webhook_signature: str | None, secret: str, tolerance_seconds: int = 300) -> bool:
+    if not raw_body or not webhook_id or not webhook_timestamp or not webhook_signature or not secret:
+        return False
+    try:
+        timestamp_value = int(webhook_timestamp)
+        if abs(time.time() - timestamp_value) > tolerance_seconds or not secret.startswith("whsec_"):
+            return False
+        encoded_secret = secret.removeprefix("whsec_")
+        key = base64.b64decode(encoded_secret + "=" * (-len(encoded_secret) % 4), validate=True)
+    except (ValueError, TypeError):
+        return False
+    signed_content = webhook_id.encode("utf-8") + b"." + webhook_timestamp.encode("utf-8") + b"." + raw_body
+    expected = base64.b64encode(hmac.new(key, signed_content, hashlib.sha256).digest()).decode("ascii")
+    for item in webhook_signature.split():
+        version, separator, supplied = item.partition(",")
+        if separator and version == "v1" and hmac.compare_digest(supplied, expected):
+            return True
+    return False

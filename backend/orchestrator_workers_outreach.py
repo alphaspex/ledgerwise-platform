@@ -1,6 +1,6 @@
-# Inputs: orchestrator dependencies, queue jobs, and completed worker results for the Ledgerwise backend.
-# Outputs: bounded worker and orchestration methods that return data or append state for the single writer.
-# Explanation: Implements one focused orchestrator responsibility; D1 queue writes remain in tick commit stages.
+# Inputs: orchestrator dependencies, queue jobs, company contact details, and completed worker results.
+# Outputs: bounded Apollo, draft, send, and reply workers; outbound messages include a company-specific Resend reply address when configured.
+# Explanation: Executes Module 2 provider and model work while D1 queue writes remain in tick commit stages.
 from __future__ import annotations
 import re
 from typing import Any
@@ -107,6 +107,7 @@ class OutreachWorkersMixin:
                     subject=str(job.get("subject") or ("Re: " + str(job["domain"]))),
                     text=str(job["message_body"]),
                     idempotency_key=f"ledgerwise-message-{message_id}",
+                    reply_to=self.resend.reply_to_for_company(int(job["company_id"])),
                 )
                 status = "sent"
             except Exception:

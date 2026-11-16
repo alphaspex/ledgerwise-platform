@@ -3,7 +3,7 @@
 # Explanation: Exposes provider integrations through focused I/O-bound modules.
 from .integrations_common import (
     GENERIC_INBOX_PREFIXES, ROLE_TITLES, normalize_domain, registrable_domain,
-    is_generic_email, verify_hmac_signature,
+    is_generic_email, verify_hmac_signature, verify_svix_signature,
 )
 from .integrations_muse import MuseClient
 from .integrations_resend import ResendClient

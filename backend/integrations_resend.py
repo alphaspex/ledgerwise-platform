@@ -1,6 +1,6 @@
-# Inputs: provider configuration and operation payloads for Meta Muse, Resend, Apollo, Cal.com, and URL checks.
-# Outputs: normalized provider responses, model usage, delivery identifiers, contact matches, bookings, and URL results.
-# Explanation: Exposes provider integrations through focused I/O-bound modules.
+# Inputs: Resend API key, configured sender and receiving domain, outbound message fields, and received email IDs.
+# Outputs: Resend delivery IDs, provider reply addresses, and full received-email payloads.
+# Explanation: Owns outbound delivery and inbound-message retrieval through the Resend API.
 from __future__ import annotations
 
 import asyncio
@@ -14,7 +14,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from email.utils import parseaddr
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 import requests
@@ -29,6 +29,22 @@ class ResendClient:
             headers={"Authorization": f"Bearer {settings.resend_api_key}", "Content-Type": "application/json"},
             timeout=httpx.Timeout(10.0, connect=5.0),
         )
+
+    def reply_to_for_company(self, company_id: int) -> str | None:
+        domain = str(self.settings.resend_inbound_domain or "").strip().lower().strip(".")
+        if not domain or "@" in domain or "/" in domain or " " in domain:
+            return None
+        return f"reply+{int(company_id)}@{domain}"
+
+    async def get_received_email(self, email_id: str) -> dict[str, Any]:
+        if not email_id or "/" in email_id or "\\" in email_id:
+            raise ValueError("Invalid Resend received email ID")
+        response = await self.client.get(f"emails/receiving/{quote(email_id, safe='')}")
+        response.raise_for_status()
+        body = response.json()
+        if not isinstance(body, dict):
+            raise RuntimeError("Resend returned an invalid received email payload")
+        return body
 
     async def close(self) -> None:
         await self.client.aclose()

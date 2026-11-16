@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
     resend_from_email: str = "onboarding@resend.dev"
     resend_webhook_secret: str = ""
+    resend_inbound_domain: str = ""
     public_app_url: str = "https://ledgerwise-frontend.vercel.app"
 
     apollo_enabled: bool = False

@@ -136,3 +136,24 @@ def test_pydantic_model_references_are_resolved() -> None:
 
     for model in (AuthEvent, CompanySummary, EmailDraft):
         assert model.model_rebuild(force=True) is not False
+
+
+def test_resend_svix_signature_verification() -> None:
+    import base64
+    import hashlib
+    import hmac
+    import time
+
+    from backend.integrations import verify_svix_signature
+
+    key = b"ledgerwise-test-webhook-key"
+    secret = "whsec_" + base64.b64encode(key).decode("ascii").rstrip("=")
+    body = b'{"type":"email.received","data":{"email_id":"mail_123"}}'
+    message_id = "msg_test_123"
+    timestamp = str(int(time.time()))
+    signed = message_id.encode() + b"." + timestamp.encode() + b"." + body
+    signature = base64.b64encode(hmac.new(key, signed, hashlib.sha256).digest()).decode("ascii")
+
+    assert verify_svix_signature(body, message_id, timestamp, "v1," + signature, secret)
+    assert not verify_svix_signature(body + b" ", message_id, timestamp, "v1," + signature, secret)
+    assert not verify_svix_signature(body, message_id, str(int(time.time()) - 600), "v1," + signature, secret)

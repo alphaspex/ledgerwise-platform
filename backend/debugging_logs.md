@@ -35,3 +35,5 @@
 // api_common.py — Bug: _json_load referenced json without importing it after helper extraction. Fix tried: add the json import.
 
 // models_research.py + models_outreach.py + models_auth.py — Bug: Pydantic models referenced ThreadState, MemoryFact, and AuthEventType without importing their definitions, leaving response schemas unresolved at runtime. Fix tried: import each type from its owning schema module. Worked: pending.
+
+// integrations_common.py + integrations_resend.py + api_routes_webhooks.py + orchestrator_workers_outreach.py + migrations/0003_resend_inbound.sql — Bug: Resend inbound replies used a non-Svix signature, treated metadata as the message body, and allowed duplicate events. Fix tried: verify Svix raw-body signatures, retrieve received emails, add company Reply-To aliases, persist dedupe keys, and enqueue Module 2 replies. Worked: pending.
