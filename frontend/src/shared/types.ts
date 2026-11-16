@@ -59,6 +59,7 @@ export interface ModelUsageTotals {
   input_tokens: number;
   output_tokens: number;
   reasoning_tokens: number;
+  searches: number;
   total_tokens: number;
   cost_usd: number | null;
   cost_complete: boolean;

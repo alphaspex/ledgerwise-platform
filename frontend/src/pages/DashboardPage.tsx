@@ -5,8 +5,8 @@
  *   - usePolling(getDashboard) -> DashboardSummary (api/dashboardApi.ts)
  *   - useAuthGuard()
  * Outputs :
- *   - JSX.Element (four pipeline SummaryBlocks plus AI usage totals, cost completeness, and per-module breakdown; Skeleton / ErrorState)
- * File explanation : Home screen with pipeline counts and persisted AI usage totals.
+ *   - JSX.Element (four pipeline SummaryBlocks plus token/search usage totals, estimated USD cost, and per-module breakdown; Skeleton / ErrorState)
+ * File explanation : Home screen with pipeline counts and persisted AI usage and cost totals.
  */
 
 import { useCallback } from 'react';
@@ -125,6 +125,7 @@ export function DashboardPage() {
           <div><div className="text-xs text-navy-mute">Input tokens</div><div className="text-lg font-semibold text-navy">{summary.usage.input_tokens.toLocaleString()}</div></div>
           <div><div className="text-xs text-navy-mute">Output tokens</div><div className="text-lg font-semibold text-navy">{summary.usage.output_tokens.toLocaleString()}</div></div>
           <div><div className="text-xs text-navy-mute">Reasoning tokens</div><div className="text-lg font-semibold text-navy">{summary.usage.reasoning_tokens.toLocaleString()}</div></div>
+          <div><div className="text-xs text-navy-mute">Web searches</div><div className="text-lg font-semibold text-navy">{summary.usage.searches.toLocaleString()}</div></div>
           <div><div className="text-xs text-navy-mute">Total tokens</div><div className="text-lg font-semibold text-navy">{summary.usage.total_tokens.toLocaleString()}</div></div>
           <div><div className="text-xs text-navy-mute">Estimated cost</div><div className="text-sm font-semibold text-navy">{usageCostLabel}</div></div>
         </div>

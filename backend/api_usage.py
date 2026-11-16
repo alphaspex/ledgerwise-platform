@@ -1,6 +1,6 @@
-# Inputs: D1Client, optional company_id: int, and optional module: str.
-# Outputs: ModelUsageSummary with total calls, input/output/reasoning tokens, optional cost, and per-module breakdowns.
-# Explanation: Aggregates model usage from D1 while isolating optional pricing data so a pricing-table issue cannot break primary dashboard, company, or conversation responses.
+# Inputs: D1Client, optional company_id: int, optional module: str, and persisted token/search pricing rows.
+# Outputs: ModelUsageSummary with token totals, web-search totals, per-module breakdowns, and configured USD costs.
+# Explanation: Aggregates token data separately from the optional pricing table so missing cost data cannot break primary API responses.
 from __future__ import annotations
 
 import logging
@@ -17,6 +17,7 @@ def _usage_totals(row: dict[str, Any]) -> ModelUsageTotals:
     input_tokens = int(row.get("input_tokens") or 0)
     output_tokens = int(row.get("output_tokens") or 0)
     reasoning_tokens = int(row.get("reasoning_tokens") or 0)
+    searches = int(row.get("searches") or 0)
     priced_calls = int(row.get("priced_calls") or 0)
     cost_complete = calls == priced_calls
     raw_cost = row.get("cost_usd")
@@ -31,6 +32,7 @@ def _usage_totals(row: dict[str, Any]) -> ModelUsageTotals:
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         reasoning_tokens=reasoning_tokens,
+        searches=searches,
         total_tokens=input_tokens + output_tokens,
         cost_usd=cost_usd,
         cost_complete=cost_complete,
@@ -46,12 +48,12 @@ def _with_cost(totals: ModelUsageTotals, cost_row: dict[str, Any] | None) -> Mod
     cost = 0.0 if totals.calls == 0 else (
         float(cost_value) if complete and cost_value is not None else None
     )
-    return totals.model_copy(update={"cost_usd": cost, "cost_complete": complete})
+    return totals.model_copy(update={"cost_usd": cost, "cost_complete": complete, "searches": int(cost_row.get("searches") or 0)})
 
 
 def _empty_summary() -> ModelUsageSummary:
     return ModelUsageSummary(
-        calls=0, input_tokens=0, output_tokens=0, reasoning_tokens=0,
+        calls=0, input_tokens=0, output_tokens=0, reasoning_tokens=0, searches=0,
         total_tokens=0, cost_usd=None, cost_complete=False, by_module={},
     )
 
@@ -102,13 +104,13 @@ async def _model_usage_summary(
     }
 
     cost_aggregate = (
-        "SELECT COUNT(c.usage_id) AS priced_calls,COALESCE(SUM(c.cost_usd),0) AS cost_usd "
-        "FROM model_usage u LEFT JOIN model_usage_costs c ON c.usage_id=u.id" + where
+        "SELECT COUNT(p.usage_id) AS priced_calls,COALESCE(SUM(p.cost_usd),0) AS cost_usd,COALESCE(SUM(p.searches),0) AS searches "
+        "FROM model_usage u LEFT JOIN model_usage_pricing p ON p.usage_id=u.id" + where
     )
     cost_by_module = (
-        "SELECT u.module AS module,COUNT(c.usage_id) AS priced_calls,"
-        "COALESCE(SUM(c.cost_usd),0) AS cost_usd "
-        "FROM model_usage u LEFT JOIN model_usage_costs c ON c.usage_id=u.id" +
+        "SELECT u.module AS module,COUNT(p.usage_id) AS priced_calls,"
+        "COALESCE(SUM(p.cost_usd),0) AS cost_usd,COALESCE(SUM(p.searches),0) AS searches "
+        "FROM model_usage u LEFT JOIN model_usage_pricing p ON p.usage_id=u.id" +
         where + " GROUP BY u.module ORDER BY u.module"
     )
     try:
@@ -124,6 +126,6 @@ async def _model_usage_summary(
             for name, usage in modules.items()
         }
     except DatabaseError:
-        logger.exception("Could not read optional model_usage_costs from D1; returning token totals without costs")
+        logger.exception("Could not read optional model_usage_pricing from D1; returning token totals without costs")
 
     return ModelUsageSummary(**total.model_dump(), by_module=modules)
