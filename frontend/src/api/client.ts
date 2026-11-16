@@ -9,10 +9,11 @@
  *   - getStoredToken(): string | null
  *   - setStoredToken(token: string | null): void
  *   - registerClientHandlers(h: { onUnauthorized: () => void; onRateLimited: () => void }): void
- * File explanation : The ONE fetch wrapper. Builds the URL (API_BASE_URL + path with {params} replaced + query string; array values joined with commas, undefined values skipped), adds 'Authorization: Bearer <token>' when endpoint.auth is not 'none', sends JSON body, parses JSON. Non-2xx => throws ApiError built from ErrorBody.detail and the Retry-After header. HTTP 401 on an endpoint whose auth is not 'none' calls onUnauthorized; HTTP 429 calls onRateLimited (no automatic retry). Network failure => ApiError with status 0 and detail 'Network error'.
+ * File explanation : The ONE fetch wrapper. Builds URLs, adds bearer auth when required, sends JSON and parses responses. Non-2xx responses throw ApiError; 401 and 429 invoke registered handlers. Network and HTTP failures are logged through api/diagnostics.ts without request headers or bodies.
  */
 
 import type { EndpointDef } from './endpoints';
+import { logApiHttpFailure, logApiNetworkFailure } from './diagnostics';
 import { API_BASE_URL, TOKEN_STORAGE_KEY } from '../shared/constants';
 import type { ApiErrorShape, ErrorBody } from '../shared/types';
 
@@ -141,7 +142,8 @@ export async function apiCall<Body, Query, Res>(
       headers,
       body: bodyStr,
     });
-  } catch {
+  } catch (error) {
+    logApiNetworkFailure(endpoint.method, endpoint.path, url, error);
     throw new ApiError(0, 'Network error', null);
   }
 
@@ -156,6 +158,8 @@ export async function apiCall<Body, Query, Res>(
     } catch {
       // Non-JSON error body
     }
+
+    logApiHttpFailure(endpoint.method, endpoint.path, response.status, response.statusText, retryAfter);
 
     if (response.status === 401 && endpoint.auth !== 'none') {
       clientHandlers.onUnauthorized();
