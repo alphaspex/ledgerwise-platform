@@ -157,3 +157,16 @@ def test_resend_svix_signature_verification() -> None:
     assert verify_svix_signature(body, message_id, timestamp, "v1," + signature, secret)
     assert not verify_svix_signature(body + b" ", message_id, timestamp, "v1," + signature, secret)
     assert not verify_svix_signature(body, message_id, str(int(time.time()) - 600), "v1," + signature, secret)
+
+
+def test_research_status_uses_shared_d1_state() -> None:
+    from pathlib import Path
+
+    source_path = Path(__file__).resolve().parents[1] / "api_routes_research.py"
+    source = source_path.read_text(encoding="utf-8")
+    route = source.split('@router.get("/research/status"', 1)[1].split('@router.get("/companies"', 1)[0]
+
+    assert "request.app.state.orchestrator.snapshot" not in route
+    assert "FROM research_runs ORDER BY id DESC LIMIT 1" in route
+    assert "FROM model_usage WHERE module='research'" in route
+    assert "FROM companies WHERE run_id=" in route

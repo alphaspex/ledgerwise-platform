@@ -1,6 +1,6 @@
-# Inputs: FastAPI request context, D1 rows, and the frontend API request/response contract.
-# Outputs: shared request helpers, serializers, authentication helpers, and route routers.
-# Explanation: Keeps backend.api.router stable while route handlers live in focused modules.
+# Inputs: authenticated FastAPI requests, D1 research-run rows, company counts, queue state, and persisted model-usage rows.
+# Outputs: exact research, company, and contact API response models.
+# Explanation: Serves research status from shared D1 state so every backend instance reports the same current run and totals.
 from __future__ import annotations
 from __future__ import annotations
 
@@ -68,13 +68,42 @@ async def resume_research(request: Request, user: dict[str, Any] = Depends(curre
 
 @router.get("/research/status", response_model=ResearchStatus)
 async def get_research_status(request: Request, user: dict[str, Any] = Depends(current_user)):
-    snapshot = request.app.state.orchestrator.snapshot if request.app.state.orchestrator else {}
+    db = _db(request)
+    results = await db.batch([
+        {"sql": "SELECT id,status,selection,target_approved,created_at FROM research_runs ORDER BY id DESC LIMIT 1"},
+        {"sql": "SELECT search_queue,system_status FROM module_1_queues WHERE id=1"},
+        {"sql": "SELECT status,COUNT(*) AS total FROM companies WHERE run_id=(SELECT id FROM research_runs ORDER BY id DESC LIMIT 1) GROUP BY status"},
+        {"sql": "SELECT COALESCE(SUM(input_tokens),0) AS input_tokens,COALESCE(SUM(output_tokens),0) AS output_tokens FROM model_usage WHERE module='research' AND run_id=(SELECT id FROM research_runs ORDER BY id DESC LIMIT 1)"},
+        {"sql": "SELECT COUNT(*) AS total FROM model_usage WHERE module='research' AND operation='search' AND run_id=(SELECT id FROM research_runs ORDER BY id DESC LIMIT 1)"},
+    ])
+    run_rows = rows(results[0])
+    if not run_rows:
+        return ResearchStatus(run=None, counts={}, progress={"search_jobs": 0}, tokens={"in": 0, "out": 0}, searches=0)
+    row = run_rows[0]
+    run_id = int(row["id"])
+    run = ResearchRun(
+        id=run_id,
+        status=row["status"],
+        selection=row["selection"],
+        target_approved=int(row["target_approved"]),
+        created_at=_iso(row["created_at"]),
+    )
+    queue_rows = rows(results[1])
+    queue = queue_rows[0] if queue_rows else {}
+    system_status = _json_load(queue.get("system_status"), {}) or {}
+    same_run = int(system_status.get("run_id") or 0) == run_id
+    search_queue = _json_load(queue.get("search_queue"), []) or []
+    counts = {str(item["status"]): int(item["total"]) for item in rows(results[2])}
+    usage_rows = rows(results[3])
+    usage = usage_rows[0] if usage_rows else {}
+    search_rows = rows(results[4])
+    searches = int(search_rows[0]["total"]) if search_rows else 0
     return ResearchStatus(
-        run=snapshot.get("run"),
-        counts=snapshot.get("counts", {}),
-        progress=snapshot.get("progress", {"search_jobs": 0}),
-        tokens=snapshot.get("tokens", {"in": 0, "out": 0}),
-        searches=int(snapshot.get("searches", 0)),
+        run=run,
+        counts=counts,
+        progress={"search_jobs": len(search_queue) if same_run else 0},
+        tokens={"in": int(usage.get("input_tokens") or 0), "out": int(usage.get("output_tokens") or 0)},
+        searches=searches,
     )
 
 @router.get("/companies", response_model=list[CompanySummary])
