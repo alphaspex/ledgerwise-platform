@@ -21,6 +21,17 @@ import requests
 import tldextract
 
 
+def count_web_search_calls(output: Any) -> int:
+    if not isinstance(output, list):
+        return 0
+    return sum(
+        1 for item in output
+        if isinstance(item, dict)
+        and item.get("type") == "web_search_call"
+        and item.get("status", "completed") == "completed"
+    )
+
+
 class MuseClient:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -76,7 +87,7 @@ class MuseClient:
         output_tokens = int(usage.get("output_tokens", 0) or 0)
         output_details = usage.get("output_tokens_details", {}) or {}
         reasoning_tokens = int(output_details.get("reasoning_tokens", 0) or 0)
-        searches = sum(1 for item in data.get("output", []) if isinstance(item, dict) and item.get("type") == "web_search_call")
+        searches = count_web_search_calls(data.get("output", []))
         usage_record = {
             "model": self.settings.muse_model,
             "input_tokens": input_tokens,

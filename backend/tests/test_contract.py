@@ -230,7 +230,7 @@ def test_dashboard_usage_aggregation_degrades_when_cost_table_is_unavailable() -
 
     class FakeD1:
         async def batch(self, statements):
-            if "model_usage_costs" in statements[0]["sql"]:
+            if "model_usage_pricing" in statements[0]["sql"]:
                 raise DatabaseError("no such table: model_usage_costs")
             return [
                 {"results": [{
@@ -267,3 +267,52 @@ def test_dashboard_usage_aggregation_degrades_when_usage_table_is_unavailable() 
     assert summary.total_tokens == 0
     assert summary.cost_usd is None
     assert summary.cost_complete is False
+
+
+def test_model_usage_cost_includes_configured_web_search_price() -> None:
+    from contextvars import ContextVar
+    from types import SimpleNamespace
+
+    from backend.orchestrator_core import OrchestratorCoreMixin
+
+    orchestrator = object.__new__(OrchestratorCoreMixin)
+    orchestrator.settings = SimpleNamespace(
+        muse_model="muse-ember-1.0",
+        muse_input_price_per_million_usd=0.10,
+        muse_output_price_per_million_usd=0.50,
+        muse_search_price_per_thousand_usd=2.50,
+        muse_pricing_version="user-supplied-2026-11-16-v1",
+    )
+    orchestrator._usage_context = ContextVar("test_usage_context", default={"module": "research", "operation": "search"})
+    orchestrator.usage_pending = []
+    orchestrator._record_model_usage({
+        "input_tokens": 1_000_000,
+        "output_tokens": 1_000_000,
+        "reasoning_tokens": 200_000,
+        "searches": 2,
+    })
+    event = orchestrator.usage_pending[0]
+    assert event["searches"] == 2
+    assert event["cost_usd"] == 0.605
+    assert event["pricing_version"] == "user-supplied-2026-11-16-v1"
+
+
+def test_muse_search_usage_counts_completed_web_search_calls() -> None:
+    from backend.integrations_muse import count_web_search_calls
+
+    assert count_web_search_calls([
+        {"type": "web_search_call", "status": "completed"},
+        {"type": "message", "content": []},
+        {"type": "web_search_call", "status": "completed"},
+        {"type": "web_search_call", "status": "in_progress"},
+    ]) == 2
+    assert count_web_search_calls(None) == 0
+
+
+def test_search_pricing_migration_backfills_historical_token_usage() -> None:
+    from pathlib import Path
+
+    migration = (Path(__file__).resolve().parents[1] / "migrations" / "0005_model_usage_search_pricing.sql").read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS model_usage_pricing" in migration
+    assert "INSERT OR IGNORE INTO model_usage_pricing" in migration
+    assert "0.10" in migration and "0.50" in migration and "0.0025" in migration

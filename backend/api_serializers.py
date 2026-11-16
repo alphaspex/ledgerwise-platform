@@ -1,5 +1,5 @@
-# Inputs: decoded D1 rows, the frontend API response contract, and optional aggregated model-usage summaries.
-# Outputs: validated user, company, message, and thread response models.
+# Inputs: decoded D1 rows, the frontend API response contract, and optional aggregated company usage summaries.
+# Outputs: validated user, company, message, and thread response models, including zero-safe usage defaults.
 # Explanation: Converts persisted D1 rows into exact public API response shapes while keeping internal fields private.
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def _company_detail(row: dict[str, Any], usage: ModelUsageSummary | None = None)
         "contact_source": row.get("contact_source"),
         "research_data": research,
         "memory": memory,
-        "usage": usage or ModelUsageSummary(calls=0, input_tokens=0, output_tokens=0, reasoning_tokens=0, total_tokens=0, cost_usd=0.0, cost_complete=True, by_module={}),
+        "usage": usage or ModelUsageSummary(calls=0, input_tokens=0, output_tokens=0, reasoning_tokens=0, searches=0, total_tokens=0, cost_usd=0.0, cost_complete=True, by_module={}),
     })
     return CompanyDetail.model_validate(summary)
 

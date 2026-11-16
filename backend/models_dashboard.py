@@ -1,6 +1,6 @@
-# Inputs: JSON response data aggregated from persisted D1 model_usage rows.
-# Outputs: validated dashboard usage totals, per-module usage totals, and dashboard summary schemas.
-# Explanation: Defines the API response models for token volume and optional, explicitly priced model costs.
+# Inputs: JSON response data aggregated from D1 model_usage and model_usage_pricing rows.
+# Outputs: validated dashboard usage totals, per-module token/search/cost totals, and dashboard summary schemas.
+# Explanation: Defines API response models for usage volume and the user-configured model/search pricing.
 from __future__ import annotations
 
 from pydantic import Field
@@ -13,6 +13,7 @@ class ModelUsageTotals(WireModel):
     input_tokens: int
     output_tokens: int
     reasoning_tokens: int
+    searches: int
     total_tokens: int
     cost_usd: float | None
     cost_complete: bool
