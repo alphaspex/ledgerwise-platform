@@ -99,7 +99,7 @@ export function NotificationPanel({
             );
           })}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
