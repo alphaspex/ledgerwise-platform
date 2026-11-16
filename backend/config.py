@@ -1,6 +1,6 @@
-# Inputs: process environment variables and optional .env values, including optional Muse per-million token rates and pricing version.
+# Inputs: process environment variables and optional .env values, including configured Muse input, output, and web-search prices.
 # Outputs: Settings, get_settings(), validated runtime configuration, and parsed CORS origins.
-# Explanation: Centralizes typed runtime configuration for D1, Meta Muse, JWT, Resend, Apollo, Cal.com, workers, limits, and opt-in model-cost accounting.
+# Explanation: Centralizes runtime configuration and the user-supplied pricing schedule used for token and web-search cost accounting.
 from functools import lru_cache
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,9 +22,10 @@ class Settings(BaseSettings):
     muse_model: str = "muse-ember-1.0"
     muse_reasoning_effort: str = "medium"
     muse_max_output_tokens: int = 8192
-    muse_input_price_per_million_usd: float | None = Field(default=None, ge=0)
-    muse_output_price_per_million_usd: float | None = Field(default=None, ge=0)
-    muse_pricing_version: str | None = None
+    muse_input_price_per_million_usd: float | None = Field(default=0.10, ge=0)
+    muse_output_price_per_million_usd: float | None = Field(default=0.50, ge=0)
+    muse_search_price_per_thousand_usd: float | None = Field(default=2.50, ge=0)
+    muse_pricing_version: str | None = "user-supplied-2026-11-16-v1"
 
     jwt_secret: str = ""
     jwt_exp_seconds: int = 604800

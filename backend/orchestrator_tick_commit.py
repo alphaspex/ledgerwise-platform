@@ -1,6 +1,6 @@
-# Inputs: tick state, completed worker results, queue snapshots, and per-call token/cost usage events.
-# Outputs: committed queue transitions, persisted model usage, refreshed status, and dispatched work.
-# Explanation: Commits orchestration writes and durable per-call model usage through the single D1 writer.
+# Inputs: tick state, completed worker results, queue snapshots, and per-call token, web-search, and cost usage events.
+# Outputs: committed queue transitions, persisted model usage and pricing rows, refreshed status, and dispatched work.
+# Explanation: Commits orchestration writes and durable per-call usage/cost data through the single D1 writer.
 from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from typing import Any
@@ -61,8 +61,8 @@ class TickCommitMixin:
             })
             if event.get("cost_usd") is not None and event.get("pricing_version"):
                 write_statements.append({
-                    "sql": "INSERT INTO model_usage_costs(usage_id,cost_usd,pricing_version) VALUES (last_insert_rowid(),?,?)",
-                    "params": [event["cost_usd"], event["pricing_version"]],
+                    "sql": "INSERT INTO model_usage_pricing(usage_id,cost_usd,searches,pricing_version) VALUES (last_insert_rowid(),?,?,?)",
+                    "params": [event["cost_usd"], int(event.get("searches") or 0), event["pricing_version"]],
                 })
             if (
                 event["module"] == "research"

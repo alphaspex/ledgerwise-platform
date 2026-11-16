@@ -1,6 +1,6 @@
-# Inputs: provider configuration and operation payloads for Meta Muse, Resend, Apollo, Cal.com, and URL checks.
-# Outputs: normalized provider responses, model usage, delivery identifiers, contact matches, bookings, and URL results.
-# Explanation: Exposes provider integrations through focused I/O-bound modules.
+# Inputs: Meta Muse settings, prompts, tool options, and Responses API payloads containing model usage and web-search call results.
+# Outputs: generated text, function calls, response identifiers, token counts, and exact completed web-search call counts.
+# Explanation: Sends Muse Responses API requests and reports per-call token and web-search usage to the orchestrator callback.
 from __future__ import annotations
 
 import asyncio
@@ -76,11 +76,13 @@ class MuseClient:
         output_tokens = int(usage.get("output_tokens", 0) or 0)
         output_details = usage.get("output_tokens_details", {}) or {}
         reasoning_tokens = int(output_details.get("reasoning_tokens", 0) or 0)
+        searches = sum(1 for item in data.get("output", []) if isinstance(item, dict) and item.get("type") == "web_search_call")
         usage_record = {
             "model": self.settings.muse_model,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "reasoning_tokens": reasoning_tokens,
+            "searches": searches,
         }
         if self.usage_callback is not None:
             self.usage_callback(usage_record)
@@ -91,5 +93,6 @@ class MuseClient:
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "reasoning_tokens": reasoning_tokens,
+            "searches": searches,
             "raw": data,
         }

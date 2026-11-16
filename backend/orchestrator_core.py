@@ -1,6 +1,6 @@
-# Inputs: D1 and provider clients, settings, and successful Muse usage callbacks from dispatched workers.
-# Outputs: orchestrator worker state and pending per-call usage records with module, operation, company, run, token, and optional cost attribution.
-# Explanation: Owns task dispatch context and collects usage from every successful Muse Responses API call for persistence by the tick commit phase.
+# Inputs: D1 and provider clients, settings, and successful Muse callbacks containing input/output/reasoning tokens and completed web-search calls.
+# Outputs: orchestrator worker state and pending per-call usage records with module, operation, company, run, token, search, and priced-cost attribution.
+# Explanation: Owns task dispatch context and calculates per-call costs from the configured token and web-search rates before the single-writer persistence phase.
 from __future__ import annotations
 import asyncio
 import time
@@ -52,13 +52,17 @@ class OrchestratorCoreMixin:
         context = self._usage_context.get()
         input_tokens = int(usage.get("input_tokens", 0) or 0)
         output_tokens = int(usage.get("output_tokens", 0) or 0)
+        searches = int(usage.get("searches", 0) or 0)
         input_price = self.settings.muse_input_price_per_million_usd
         output_price = self.settings.muse_output_price_per_million_usd
+        search_price = self.settings.muse_search_price_per_thousand_usd
         pricing_version = self.settings.muse_pricing_version
         cost_usd = None
-        if input_price is not None and output_price is not None and pricing_version:
+        if input_price is not None and output_price is not None and search_price is not None and pricing_version:
             # Reasoning tokens are already included in output_tokens; do not add them twice.
-            cost_usd = round((input_tokens * input_price + output_tokens * output_price) / 1_000_000, 12)
+            token_cost = (input_tokens * input_price + output_tokens * output_price) / 1_000_000
+            search_cost = searches * search_price / 1_000
+            cost_usd = round(token_cost + search_cost, 12)
         self.usage_pending.append({
             "model": str(usage.get("model") or self.settings.muse_model),
             "module": str(context.get("module") or "unattributed"),
@@ -68,6 +72,7 @@ class OrchestratorCoreMixin:
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "reasoning_tokens": int(usage.get("reasoning_tokens", 0) or 0),
+            "searches": searches,
             "cost_usd": cost_usd,
             "pricing_version": pricing_version if cost_usd is not None else None,
         })
