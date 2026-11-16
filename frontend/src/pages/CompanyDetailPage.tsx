@@ -6,8 +6,8 @@
  *   - usePolling(() => getCompany(id)) -> CompanyDetail (api/researchApi.ts)
  *   - useAuthGuard()
  * Outputs :
- *   - JSX.Element (full screen: PageHeader with back button -> goTo('companies'); ScoreBadge + status pills; ReasonList(research_data.reasons, research_data.sources); FactList(memory.facts) when memory exists; contact block (email, role, source); do_not_contact warning banner when true; if selectedCompanyId is null it calls goTo('companies'); Skeleton / ErrorState)
- * File explanation : Everything known about one company, with proof for each reason.
+ *   - JSX.Element (company detail; 404 or missing selectedCompanyId returns to 'companies'; Skeleton / ErrorState for other failures)
+ * File explanation : Shows one company's research evidence, verified memory, contact details, and status; stale saved company IDs return to the company list.
  */
 
 import { useCallback, useEffect } from 'react';
@@ -51,6 +51,10 @@ export function CompanyDetailPage() {
   const { data: company, loading, error, refresh } = usePolling<CompanyDetail>(fetchCompany, {
     enabled: selectedCompanyId !== null,
   });
+
+  useEffect(() => {
+    if (error?.status === 404) goTo('companies');
+  }, [error, goTo]);
 
   if (selectedCompanyId === null) {
     return null;
