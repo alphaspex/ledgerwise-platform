@@ -1,23 +1,26 @@
 /**
  * Inputs :
- *   - props: { notifications: Notification[]; onMarkAllRead: () => void; onSelect: (notification: Notification) => void }
+ *   - props: { notifications: Notification[]; error: ApiError | null; onMarkAllRead: () => void; onSelect: (notification: Notification) => void }
  * Outputs :
  *   - JSX.Element (bell icon button with animated unread-count badge (read === false); click toggles an animated dropdown containing NotificationPanel; closes on outside click)
- * File explanation : Header bell. Pure presentation: no API calls.
+ * File explanation : Header bell. Pure presentation: no API calls. Forwards notification polling errors to the dropdown.
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Bell } from 'lucide-react';
+import type { ApiError } from '../../api/client';
 import type { Notification } from '../../shared/types';
 import { NotificationPanel } from '../features/NotificationPanel';
 
 export function NotificationBell({
   notifications,
+  error,
   onMarkAllRead,
   onSelect,
 }: {
   notifications: Notification[];
+  error: ApiError | null;
   onMarkAllRead: () => void;
   onSelect: (notification: Notification) => void;
 }) {
@@ -71,6 +74,7 @@ export function NotificationBell({
           >
             <NotificationPanel
               notifications={notifications}
+              error={error}
               onMarkAllRead={onMarkAllRead}
               onSelect={(notification) => {
                 setOpen(false);
