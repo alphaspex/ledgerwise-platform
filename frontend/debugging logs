@@ -4,3 +4,4 @@
 // frontend/src/components/layout/AppShell.tsx — Bug: notification polling errors were discarded, so failed requests appeared as an empty bell. Fix tried: pass the polling error to NotificationBell and retain stale notification data.
 // frontend/src/components/layout/NotificationBell.tsx — Bug: the bell had no route for polling failure details. Fix tried: accept the ApiError and forward it to NotificationPanel.
 // frontend/src/components/features/NotificationPanel.tsx — Bug: the empty state appeared when notification fetching failed. Fix tried: show an error banner and suppress the empty state while retaining any stale notifications.
+// frontend/src/components/features/NotificationPanel.tsx — Bug: Vercel TypeScript build found a missing fallback branch in the nested empty/list conditional. Fix tried: added the explicit null branch when an error exists and there are no cached notifications.
