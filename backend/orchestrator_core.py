@@ -1,6 +1,6 @@
-# Inputs: orchestrator dependencies, queue jobs, and completed worker results for the Ledgerwise backend.
-# Outputs: bounded worker and orchestration methods that return data or append state for the single writer.
-# Explanation: Implements one focused orchestrator responsibility; D1 queue writes remain in tick commit stages.
+# Inputs: D1 and provider clients, settings, and successful Muse usage callbacks from dispatched workers.
+# Outputs: orchestrator worker state and pending per-call usage records with module, operation, company, run, token, and optional cost attribution.
+# Explanation: Owns task dispatch context and collects usage from every successful Muse Responses API call for persistence by the tick commit phase.
 from __future__ import annotations
 import asyncio
 import time
@@ -50,15 +50,26 @@ class OrchestratorCoreMixin:
 
     def _record_model_usage(self, usage: dict[str, Any]) -> None:
         context = self._usage_context.get()
+        input_tokens = int(usage.get("input_tokens", 0) or 0)
+        output_tokens = int(usage.get("output_tokens", 0) or 0)
+        input_price = self.settings.muse_input_price_per_million_usd
+        output_price = self.settings.muse_output_price_per_million_usd
+        pricing_version = self.settings.muse_pricing_version
+        cost_usd = None
+        if input_price is not None and output_price is not None and pricing_version:
+            # Reasoning tokens are already included in output_tokens; do not add them twice.
+            cost_usd = round((input_tokens * input_price + output_tokens * output_price) / 1_000_000, 12)
         self.usage_pending.append({
             "model": str(usage.get("model") or self.settings.muse_model),
             "module": str(context.get("module") or "unattributed"),
             "operation": str(context.get("operation") or "generate"),
             "company_id": context.get("company_id"),
             "run_id": context.get("run_id"),
-            "input_tokens": int(usage.get("input_tokens", 0) or 0),
-            "output_tokens": int(usage.get("output_tokens", 0) or 0),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
             "reasoning_tokens": int(usage.get("reasoning_tokens", 0) or 0),
+            "cost_usd": cost_usd,
+            "pricing_version": pricing_version if cost_usd is not None else None,
         })
 
     async def run_forever(self) -> None:

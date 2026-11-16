@@ -1,6 +1,6 @@
-# Inputs: tick state, completed worker results, queue snapshots, and usage events from the orchestrator.
-# Outputs: updated tick state, committed queue transitions, refreshed status, and dispatched work.
-# Explanation: Implements one bounded phase of the single-writer orchestration cycle.
+# Inputs: tick state, completed worker results, queue snapshots, and per-call token/cost usage events.
+# Outputs: committed queue transitions, persisted model usage, refreshed status, and dispatched work.
+# Explanation: Commits orchestration writes and durable per-call model usage through the single D1 writer.
 from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from typing import Any
@@ -52,11 +52,12 @@ class TickCommitMixin:
         usage_batch = list(self.usage_pending)
         for event in usage_batch:
             write_statements.append({
-                "sql": "INSERT INTO model_usage(model,module,operation,company_id,run_id,input_tokens,output_tokens,reasoning_tokens) VALUES (?,?,?,?,?,?,?,?)",
+                "sql": "INSERT INTO model_usage(model,module,operation,company_id,run_id,input_tokens,output_tokens,reasoning_tokens,cost_usd,pricing_version) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 "params": [
                     event["model"], event["module"], event["operation"],
                     event["company_id"], event["run_id"], event["input_tokens"],
                     event["output_tokens"], event["reasoning_tokens"],
+                    event.get("cost_usd"), event.get("pricing_version"),
                 ],
             })
             if (
