@@ -2,12 +2,12 @@
  * Inputs :
  *   - props: { children: ReactNode }
  *   - useApp(): AppContextValue (from shared/AppContext.tsx)
- *   - usePolling(listNotifications) -> Notification[]; markNotificationsRead(body: MarkReadRequest): Promise<OkResponse> (from api/notificationsApi.ts)
+ *   - usePolling(listNotifications) -> { data: Notification[] | null; error: ApiError | null }; markNotificationsRead(body: MarkReadRequest): Promise<OkResponse> (from api/notificationsApi.ts)
  *   - logout(): Promise<OkResponse> (from api/authApi.ts)
  * Outputs :
  *   - JSX.Element (desktop: Sidebar left + top bar + scrollable content; mobile: top bar + content + BottomBar)
  *   - top bar contains NotificationBell, the user's email and a Log out button (calls logout() then context.signOut())
- * File explanation : Layout of every signed-in screen. Owns the notifications polling (5s) and passes data to NotificationBell. Bell item click navigates: unsure_answer and do_not_contact -> goTo('chat', company_id); contact_missing -> goTo('contacts_needed'); booking_conflict -> goTo('bookings').
+ * File explanation : Layout of every signed-in screen. Owns 5s notification polling and passes data plus polling errors to NotificationBell, so failures are not shown as an empty list. Bell item click navigates: unsure_answer and do_not_contact -> goTo('chat', company_id); contact_missing -> goTo('contacts_needed'); booking_conflict -> goTo('bookings').
  */
 
 import { useCallback, useState, type ReactNode } from 'react';
@@ -27,7 +27,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [loggingOut, setLoggingOut] = useState(false);
 
   const fetchNotifications = useCallback(() => listNotifications(), []);
-  const { data: notificationsData, refresh } = usePolling<Notification[]>(fetchNotifications);
+  const { data: notificationsData, error: notificationsError, refresh } = usePolling<Notification[]>(fetchNotifications);
   const notifications = notificationsData ?? [];
 
   const handleMarkAllRead = useCallback(async () => {
@@ -88,6 +88,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="flex items-center gap-3 sm:gap-4">
             <NotificationBell
               notifications={notifications}
+              error={notificationsError}
               onMarkAllRead={() => void handleMarkAllRead()}
               onSelect={(n) => void handleSelectNotification(n)}
             />
