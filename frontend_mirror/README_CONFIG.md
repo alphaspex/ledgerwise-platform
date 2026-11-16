@@ -13,4 +13,4 @@
 ## Headers on source files
 
 Every `.ts` / `.tsx` / `.css` file under `src/` starts with a comment block: `Inputs`, `Outputs`, `File explanation`.
-Files with real content (not just a header): `src/shared/types.ts`, `src/shared/constants.ts`, `src/api/endpoints.ts`. They are the contracts every other file connects through.
+Files with real content (not just a header): `src/shared/types.ts`, `src/shared/constants.ts`, `src/api/endpoints.ts`, and `src/api/diagnostics.ts` (safe browser-console API failure logging). The types, constants and endpoints are the contracts every other file connects through.
