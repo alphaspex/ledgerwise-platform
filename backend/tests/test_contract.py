@@ -170,3 +170,37 @@ def test_research_status_uses_shared_d1_state() -> None:
     assert "FROM research_runs ORDER BY id DESC LIMIT 1" in route
     assert "FROM model_usage WHERE module='research'" in route
     assert "FROM companies WHERE run_id=" in route
+
+
+def test_model_usage_totals_do_not_invent_unpriced_costs() -> None:
+    from backend.api_usage import _usage_totals
+
+    usage = _usage_totals({
+        "calls": 2,
+        "input_tokens": 100,
+        "output_tokens": 60,
+        "reasoning_tokens": 20,
+        "priced_calls": 0,
+        "cost_usd": None,
+    })
+    assert usage.calls == 2
+    assert usage.total_tokens == 160
+    assert usage.reasoning_tokens == 20
+    assert usage.cost_usd is None
+    assert usage.cost_complete is False
+
+
+def test_model_usage_totals_count_reasoning_with_output_once() -> None:
+    from backend.api_usage import _usage_totals
+
+    usage = _usage_totals({
+        "calls": 1,
+        "input_tokens": 30,
+        "output_tokens": 50,
+        "reasoning_tokens": 15,
+        "priced_calls": 1,
+        "cost_usd": 0.0005,
+    })
+    assert usage.total_tokens == 80
+    assert usage.cost_usd == 0.0005
+    assert usage.cost_complete is True

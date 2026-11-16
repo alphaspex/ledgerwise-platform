@@ -16,6 +16,7 @@ import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import ValidationError
 
+from .api_usage import _model_usage_summary
 from .config import Settings
 from .db import D1Client, changes, last_row_id, rows
 from .integrations import is_generic_email, normalize_domain, verify_hmac_signature
@@ -135,7 +136,8 @@ async def get_company(id: int, request: Request, user: dict[str, Any] = Depends(
     result = rows(await _db(request).query("SELECT * FROM companies WHERE id=?", [id]))
     if not result:
         raise HTTPException(status_code=404, detail="Company not found")
-    return _company_detail(result[0])
+    usage = await _model_usage_summary(_db(request), company_id=id)
+    return _company_detail(result[0], usage)
 
 @router.post("/research/review", response_model=OkResponse)
 async def review_company(body: ReviewCompanyRequest, request: Request, user: dict[str, Any] = Depends(current_user)):

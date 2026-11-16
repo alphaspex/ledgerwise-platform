@@ -1,6 +1,6 @@
-# Inputs: FastAPI request context, D1 rows, and the frontend API request/response contract.
-# Outputs: shared request helpers, serializers, authentication helpers, and route routers.
-# Explanation: Keeps backend.api.router stable while route handlers live in focused modules.
+# Inputs: authenticated thread requests, D1 messages, company state, and persisted conversation model_usage records.
+# Outputs: thread summaries, chronological messages, and conversation-specific AI usage totals.
+# Explanation: Serves conversation history and its attributed AI usage from shared D1 state.
 from __future__ import annotations
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import ValidationError
 
+from .api_usage import _model_usage_summary
 from .config import Settings
 from .db import D1Client, changes, last_row_id, rows
 from .integrations import is_generic_email, normalize_domain, verify_hmac_signature
@@ -55,7 +56,8 @@ async def get_thread(company_id: int, request: Request, user: dict[str, Any] = D
     if not messages or row.get("last_message_at") is None:
         raise HTTPException(status_code=404, detail="Thread not found")
     summary = _thread_summary(row)
-    return ThreadDetail(summary=summary, messages=[_message(message) for message in messages])
+    usage = await _model_usage_summary(_db(request), company_id=company_id, module="conversations")
+    return ThreadDetail(summary=summary, messages=[_message(message) for message in messages], usage=usage)
 
 @router.post("/threads/{company_id}/takeover", response_model=ThreadSummary)
 async def takeover_thread(company_id: int, request: Request, user: dict[str, Any] = Depends(current_user)):

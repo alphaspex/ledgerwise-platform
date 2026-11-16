@@ -41,3 +41,5 @@
 // api_routes_research.py — Bug: /research/status returned the orchestrator's process-local snapshot, so concurrent instances could show different runs, counts, and token totals. Fix tried: read the latest run, live company counts, matching queue state, and persisted research usage directly from D1. Worked: pending.
 
 // orchestrator_core.py + orchestrator_tick_commit.py + config.py + migrations/0004_model_usage_cost.sql — Bug: per-call token usage had no durable optional cost fields, so spend could not be calculated from configured model rates. Fix tried: add versioned optional per-million input/output rates, persist nullable per-call USD cost, and count reasoning within output tokens only. Worked: pending.
+
+// api_usage.py + api_routes_dashboard.py + api_routes_research.py + api_routes_threads.py — Bug: persisted Muse token/cost events were not aggregated into dashboard, company, or conversation API responses. Fix tried: add D1 totals and per-module aggregation, expose typed usage summaries, and return unknown cost when any included calls are unpriced. Worked: pending.

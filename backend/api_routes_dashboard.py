@@ -1,6 +1,6 @@
-# Inputs: FastAPI request context, D1 rows, and the frontend API request/response contract.
-# Outputs: shared request helpers, serializers, authentication helpers, and route routers.
-# Explanation: Keeps backend.api.router stable while route handlers live in focused modules.
+# Inputs: authenticated FastAPI requests, D1 dashboard counts, and persisted model_usage records.
+# Outputs: dashboard business counts plus all-module token and optional cost summaries.
+# Explanation: Serves the dashboard API summary, including complete or explicitly unpriced AI usage totals.
 from __future__ import annotations
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import ValidationError
 
+from .api_usage import _model_usage_summary
 from .config import Settings
 from .db import D1Client, changes, last_row_id, rows
 from .integrations import is_generic_email, normalize_domain, verify_hmac_signature
@@ -94,4 +95,5 @@ async def get_dashboard(request: Request, user: dict[str, Any] = Depends(current
         conversations={"auto": counts[6], "needs_human": counts[7], "human_taken_over": counts[8]},
         bookings={"upcoming": counts[9]},
         notifications={"unread": counts[10]},
+        usage=await _model_usage_summary(db),
     )
