@@ -1,13 +1,14 @@
 /**
  * Inputs :
- *   - props: { notifications: Notification[]; onMarkAllRead: () => void; onSelect: (notification: Notification) => void }
+ *   - props: { notifications: Notification[]; error: ApiError | null; onMarkAllRead: () => void; onSelect: (notification: Notification) => void }
  *   - NOTIFICATION_REASON_LABEL (from shared/constants.ts)
  * Outputs :
  *   - JSX.Element (scrollable list, newest first; each row: reason label, domain, body text (plain text), time, unread dot; header with a 'Mark all read' Button; EmptyState text when the list is empty)
- * File explanation : Content of the bell dropdown.
+ * File explanation : Content of the bell dropdown. Shows polling failures separately from an empty result and retains stale notifications.
  */
 
 import { Bell, CheckCheck } from 'lucide-react';
+import type { ApiError } from '../../api/client';
 import { NOTIFICATION_REASON_LABEL } from '../../shared/constants';
 import type { Notification } from '../../shared/types';
 import { Button } from '../ui/Button';
@@ -15,10 +16,12 @@ import { EmptyState } from '../ui/EmptyState';
 
 export function NotificationPanel({
   notifications,
+  error,
   onMarkAllRead,
   onSelect,
 }: {
   notifications: Notification[];
+  error: ApiError | null;
   onMarkAllRead: () => void;
   onSelect: (notification: Notification) => void;
 }) {
@@ -41,7 +44,14 @@ export function NotificationPanel({
         </Button>
       </div>
 
-      {sorted.length === 0 ? (
+      {error ? (
+        <div role="alert" className="border-b border-line bg-bad/5 px-4 py-3 text-xs text-bad">
+          Notifications could not be refreshed: {error.detail}
+          {error.status > 0 ? ' (HTTP ' + error.status + ')' : ' Check the API connection.'}
+        </div>
+      ) : null}
+
+      {sorted.length === 0 && !error ? (
         <div className="p-3">
           <EmptyState
             icon={Bell}
@@ -49,7 +59,7 @@ export function NotificationPanel({
             message="No notifications yet."
           />
         </div>
-      ) : (
+      ) : sorted.length > 0 ? (
         <div className="overflow-y-auto divide-y divide-line">
           {sorted.map((n) => {
             const timeText = new Date(n.created_at).toLocaleString(undefined, {
