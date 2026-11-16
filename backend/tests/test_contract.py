@@ -129,3 +129,10 @@ def test_apollo_role_title_mapping() -> None:
     assert infer_contact_role("Chief Operating Officer") == "coo"
     assert infer_contact_role("Controller") == "finance"
     assert infer_contact_role("Operations Manager") == "unknown"
+
+
+def test_pydantic_model_references_are_resolved() -> None:
+    from backend.models import AuthEvent, CompanySummary, EmailDraft
+
+    for model in (AuthEvent, CompanySummary, EmailDraft):
+        assert model.model_rebuild(force=True) is not False

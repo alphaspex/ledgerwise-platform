@@ -10,6 +10,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .models_common import WireModel, ContactRole, ContactSource, EmailStatus, MessageSender, MessageStatus, ThreadState, ToolName
+from .models_research import MemoryFact
 
 
 class ContactRequest(WireModel):

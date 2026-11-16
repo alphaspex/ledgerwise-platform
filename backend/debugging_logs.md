@@ -33,3 +33,5 @@
 // orchestrator_core.py — Bug: run_forever used time.monotonic without importing time after the orchestrator split. Fix tried: add the missing standard-library import.
 // orchestrator_workers_research.py + orchestrator_workers_outreach.py + orchestrator_workers_url.py — Bug: extracted modules retained a truncated multiline integrations import, making all three files invalid Python; outreach also lacked _parse_json_object. Fix tried: replace inherited imports with minimal complete module-specific imports.
 // api_common.py — Bug: _json_load referenced json without importing it after helper extraction. Fix tried: add the json import.
+
+// models_research.py + models_outreach.py + models_auth.py — Bug: Pydantic models referenced ThreadState, MemoryFact, and AuthEventType without importing their definitions, leaving response schemas unresolved at runtime. Fix tried: import each type from its owning schema module. Worked: pending.

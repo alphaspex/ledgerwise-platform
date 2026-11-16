@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .models_common import WireModel, CompanyStatus, ContactRole, ContactSource, EmailStatus, ResearchRunStatus, SourceResult
+from .models_common import WireModel, CompanyStatus, ContactRole, ContactSource, EmailStatus, ResearchRunStatus, SourceResult, ThreadState
 
 
 class ResearchRun(WireModel):
