@@ -1,6 +1,6 @@
-# Inputs: FastAPI request context, D1 rows, and the frontend API request/response contract.
-# Outputs: shared request helpers, serializers, authentication helpers, and route routers.
-# Explanation: Keeps backend.api.router stable while route handlers live in focused modules.
+# Inputs: decoded D1 rows, the frontend API response contract, and optional aggregated model-usage summaries.
+# Outputs: validated user, company, message, and thread response models.
+# Explanation: Converts persisted D1 rows into exact public API response shapes while keeping internal fields private.
 from __future__ import annotations
 
 __all__ = [
@@ -8,7 +8,7 @@ __all__ = [
     "_company_detail", "_message", "_thread_summary",
 ]
 from typing import Any
-from .models import AuthUser, UserSummary, CompanySummary, CompanyDetail, ThreadMessage, ThreadSummary
+from .models import AuthUser, UserSummary, CompanySummary, CompanyDetail, ThreadMessage, ThreadSummary, ModelUsageSummary
 from .api_common import _iso, _json_load, _bool
 
 def _user(row: dict[str, Any]) -> AuthUser:
@@ -38,7 +38,7 @@ def _company_summary(row: dict[str, Any]) -> CompanySummary:
         updated_at=_iso(row.get("updated_at")),
     )
 
-def _company_detail(row: dict[str, Any]) -> CompanyDetail:
+def _company_detail(row: dict[str, Any], usage: ModelUsageSummary | None = None) -> CompanyDetail:
     summary = _company_summary(row).model_dump()
     research = _json_load(row.get("research_data"), None)
     memory = _json_load(row.get("memory"), None)
@@ -49,6 +49,7 @@ def _company_detail(row: dict[str, Any]) -> CompanyDetail:
         "contact_source": row.get("contact_source"),
         "research_data": research,
         "memory": memory,
+        "usage": usage or ModelUsageSummary(calls=0, input_tokens=0, output_tokens=0, reasoning_tokens=0, total_tokens=0, cost_usd=0.0, cost_complete=True, by_module={}),
     })
     return CompanyDetail.model_validate(summary)
 

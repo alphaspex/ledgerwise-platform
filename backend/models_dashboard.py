@@ -1,15 +1,25 @@
-# Inputs: JSON request bodies, query values, and decoded D1 rows conforming to frontend/src/shared/types.ts.
-# Outputs: validated Pydantic request, response, and enum types with exact frontend field names and nullable fields.
-# Explanation: Defines the backend wire contract in small domain-specific schema modules.
+# Inputs: JSON response data aggregated from persisted D1 model_usage rows.
+# Outputs: validated dashboard usage totals, per-module usage totals, and dashboard summary schemas.
+# Explanation: Defines the API response models for token volume and optional, explicitly priced model costs.
 from __future__ import annotations
 
-from datetime import datetime
-from enum import Enum
-from typing import Any
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import Field
 
 from .models_common import WireModel
+
+
+class ModelUsageTotals(WireModel):
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    reasoning_tokens: int
+    total_tokens: int
+    cost_usd: float | None
+    cost_complete: bool
+
+
+class ModelUsageSummary(ModelUsageTotals):
+    by_module: dict[str, ModelUsageTotals]
 
 
 class DashboardSummary(WireModel):
@@ -18,6 +28,7 @@ class DashboardSummary(WireModel):
     conversations: dict[str, int]
     bookings: dict[str, int]
     notifications: dict[str, int]
+    usage: ModelUsageSummary
 
 
 class WebhookAck(WireModel):

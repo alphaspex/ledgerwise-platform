@@ -1,6 +1,6 @@
-# Inputs: JSON request bodies, query values, and decoded D1 rows conforming to frontend/src/shared/types.ts.
-# Outputs: validated Pydantic request, response, and enum types with exact frontend field names and nullable fields.
-# Explanation: Defines the backend wire contract in small domain-specific schema modules.
+# Inputs: JSON request bodies, query values, decoded D1 rows, and aggregated conversation usage summaries.
+# Outputs: validated outreach, email, message, and thread request/response types matching the frontend wire contract.
+# Explanation: Defines outreach and conversation schemas, including per-thread AI usage totals.
 from __future__ import annotations
 
 from datetime import datetime
@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .models_common import WireModel, ContactRole, ContactSource, EmailStatus, MessageSender, MessageStatus, ThreadState, ToolName
 from .models_research import MemoryFact
+from .models_dashboard import ModelUsageSummary
 
 
 class ContactRequest(WireModel):
@@ -72,6 +73,7 @@ class ThreadSummary(WireModel):
 class ThreadDetail(WireModel):
     summary: ThreadSummary
     messages: list[ThreadMessage]
+    usage: ModelUsageSummary
 
 
 class HumanReplyRequest(WireModel):

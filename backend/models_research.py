@@ -1,6 +1,6 @@
-# Inputs: JSON request bodies, query values, and decoded D1 rows conforming to frontend/src/shared/types.ts.
-# Outputs: validated Pydantic request, response, and enum types with exact frontend field names and nullable fields.
-# Explanation: Defines the backend wire contract in small domain-specific schema modules.
+# Inputs: JSON request bodies, query values, decoded D1 rows, and aggregated model-usage summaries.
+# Outputs: validated research, company, and contact request/response types matching the frontend wire contract.
+# Explanation: Defines research and company schemas, including per-company AI usage totals.
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,6 +10,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .models_common import WireModel, CompanyStatus, ContactRole, ContactSource, EmailStatus, ResearchRunStatus, SourceResult, ThreadState
+from .models_dashboard import ModelUsageSummary
 
 
 class ResearchRun(WireModel):
@@ -107,6 +108,7 @@ class CompanyDetail(CompanySummary):
     contact_source: ContactSource | None
     research_data: ResearchData | None
     memory: Memory | None
+    usage: ModelUsageSummary
 
 
 class CompaniesQuery(WireModel):
