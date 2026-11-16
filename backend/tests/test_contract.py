@@ -219,3 +219,51 @@ def test_model_usage_persistence_uses_cost_side_table() -> None:
 
     source = (Path(__file__).resolve().parents[1] / "orchestrator_tick_commit.py").read_text(encoding="utf-8")
     assert "INSERT INTO model_usage_costs(usage_id,cost_usd,pricing_version)" in source
+
+
+
+def test_dashboard_usage_aggregation_degrades_when_cost_table_is_unavailable() -> None:
+    import asyncio
+
+    from backend.api_usage import _model_usage_summary
+    from backend.db import DatabaseError
+
+    class FakeD1:
+        async def batch(self, statements):
+            if "model_usage_costs" in statements[0]["sql"]:
+                raise DatabaseError("no such table: model_usage_costs")
+            return [
+                {"results": [{
+                    "calls": 2, "input_tokens": 100,
+                    "output_tokens": 60, "reasoning_tokens": 20,
+                }]},
+                {"results": [{
+                    "module": "research", "calls": 2,
+                    "input_tokens": 100, "output_tokens": 60,
+                    "reasoning_tokens": 20,
+                }]},
+            ]
+
+    summary = asyncio.run(_model_usage_summary(FakeD1()))
+    assert summary.calls == 2
+    assert summary.total_tokens == 160
+    assert summary.by_module["research"].calls == 2
+    assert summary.cost_usd is None
+    assert summary.cost_complete is False
+
+
+def test_dashboard_usage_aggregation_degrades_when_usage_table_is_unavailable() -> None:
+    import asyncio
+
+    from backend.api_usage import _model_usage_summary
+    from backend.db import DatabaseError
+
+    class FakeD1:
+        async def batch(self, statements):
+            raise DatabaseError("no such table: model_usage")
+
+    summary = asyncio.run(_model_usage_summary(FakeD1()))
+    assert summary.calls == 0
+    assert summary.total_tokens == 0
+    assert summary.cost_usd is None
+    assert summary.cost_complete is False

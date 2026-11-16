@@ -1,12 +1,15 @@
 # Inputs: D1Client, optional company_id: int, and optional module: str.
 # Outputs: ModelUsageSummary with total calls, input/output/reasoning tokens, optional cost, and per-module breakdowns.
-# Explanation: Aggregates durable per-call model usage without inventing costs for rows that have no configured pricing.
+# Explanation: Aggregates model usage from D1 while isolating optional pricing data so a pricing-table issue cannot break primary dashboard, company, or conversation responses.
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from .db import D1Client, rows
+from .db import D1Client, DatabaseError, rows
 from .models_dashboard import ModelUsageSummary, ModelUsageTotals
+
+logger = logging.getLogger(__name__)
 
 
 def _usage_totals(row: dict[str, Any]) -> ModelUsageTotals:
@@ -34,6 +37,25 @@ def _usage_totals(row: dict[str, Any]) -> ModelUsageTotals:
     )
 
 
+def _with_cost(totals: ModelUsageTotals, cost_row: dict[str, Any] | None) -> ModelUsageTotals:
+    if cost_row is None:
+        return totals
+    priced_calls = int(cost_row.get("priced_calls") or 0)
+    complete = totals.calls == priced_calls
+    cost_value = cost_row.get("cost_usd")
+    cost = 0.0 if totals.calls == 0 else (
+        float(cost_value) if complete and cost_value is not None else None
+    )
+    return totals.model_copy(update={"cost_usd": cost, "cost_complete": complete})
+
+
+def _empty_summary() -> ModelUsageSummary:
+    return ModelUsageSummary(
+        calls=0, input_tokens=0, output_tokens=0, reasoning_tokens=0,
+        total_tokens=0, cost_usd=None, cost_complete=False, by_module={},
+    )
+
+
 async def _model_usage_summary(
     db: D1Client,
     company_id: int | None = None,
@@ -48,30 +70,60 @@ async def _model_usage_summary(
         clauses.append("u.module=?")
         params.append(module)
     where = " WHERE " + " AND ".join(clauses) if clauses else ""
+
     aggregate = (
         "SELECT COUNT(*) AS calls,"
-        "COALESCE(SUM(input_tokens),0) AS input_tokens,"
-        "COALESCE(SUM(output_tokens),0) AS output_tokens,"
-        "COALESCE(SUM(reasoning_tokens),0) AS reasoning_tokens,"
-        "COUNT(c.cost_usd) AS priced_calls,SUM(c.cost_usd) AS cost_usd "
-        "FROM model_usage u LEFT JOIN model_usage_costs c ON c.usage_id=u.id" + where
+        "COALESCE(SUM(u.input_tokens),0) AS input_tokens,"
+        "COALESCE(SUM(u.output_tokens),0) AS output_tokens,"
+        "COALESCE(SUM(u.reasoning_tokens),0) AS reasoning_tokens "
+        "FROM model_usage u" + where
     )
     by_module = (
         "SELECT u.module AS module,COUNT(*) AS calls,"
-        "COALESCE(SUM(input_tokens),0) AS input_tokens,"
-        "COALESCE(SUM(output_tokens),0) AS output_tokens,"
-        "COALESCE(SUM(reasoning_tokens),0) AS reasoning_tokens,"
-        "COUNT(cost_usd) AS priced_calls,SUM(cost_usd) AS cost_usd "
-        "FROM model_usage u LEFT JOIN model_usage_costs c ON c.usage_id=u.id" + where + " GROUP BY u.module ORDER BY u.module"
+        "COALESCE(SUM(u.input_tokens),0) AS input_tokens,"
+        "COALESCE(SUM(u.output_tokens),0) AS output_tokens,"
+        "COALESCE(SUM(u.reasoning_tokens),0) AS reasoning_tokens "
+        "FROM model_usage u" + where + " GROUP BY u.module ORDER BY u.module"
     )
-    results = await db.batch([
-        {"sql": aggregate, "params": params},
-        {"sql": by_module, "params": params},
-    ])
-    total_rows = rows(results[0])
+    try:
+        token_results = await db.batch([
+            {"sql": aggregate, "params": params},
+            {"sql": by_module, "params": params},
+        ])
+    except DatabaseError:
+        logger.exception("Could not read optional model_usage totals from D1")
+        return _empty_summary()
+
+    total_rows = rows(token_results[0])
     total = _usage_totals(total_rows[0] if total_rows else {})
     modules = {
         str(row["module"]): _usage_totals(row)
-        for row in rows(results[1])
+        for row in rows(token_results[1])
     }
+
+    cost_aggregate = (
+        "SELECT COUNT(c.usage_id) AS priced_calls,COALESCE(SUM(c.cost_usd),0) AS cost_usd "
+        "FROM model_usage u LEFT JOIN model_usage_costs c ON c.usage_id=u.id" + where
+    )
+    cost_by_module = (
+        "SELECT u.module AS module,COUNT(c.usage_id) AS priced_calls,"
+        "COALESCE(SUM(c.cost_usd),0) AS cost_usd "
+        "FROM model_usage u LEFT JOIN model_usage_costs c ON c.usage_id=u.id" +
+        where + " GROUP BY u.module ORDER BY u.module"
+    )
+    try:
+        cost_results = await db.batch([
+            {"sql": cost_aggregate, "params": params},
+            {"sql": cost_by_module, "params": params},
+        ])
+        cost_rows = rows(cost_results[0])
+        total = _with_cost(total, cost_rows[0] if cost_rows else None)
+        module_costs = {str(row["module"]): row for row in rows(cost_results[1])}
+        modules = {
+            name: _with_cost(usage, module_costs.get(name))
+            for name, usage in modules.items()
+        }
+    except DatabaseError:
+        logger.exception("Could not read optional model_usage_costs from D1; returning token totals without costs")
+
     return ModelUsageSummary(**total.model_dump(), by_module=modules)
