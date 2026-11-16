@@ -3,6 +3,8 @@
  *   - endpoint: EndpointDef<Body, Query, Res> (from api/endpoints.ts)
  *   - args?: { pathParams?: Record<string, string | number>; query?: Query; body?: Body }
  *   - API_BASE_URL: string, TOKEN_STORAGE_KEY: string (from shared/constants.ts)
+ *   - logApiNetworkFailure(method: HttpMethod, path: string, requestUrl: string, error: unknown): void
+ *   - logApiHttpFailure(method: HttpMethod, path: string, status: number, statusText: string, retryAfter: number | null): void (from api/diagnostics.ts)
  * Outputs :
  *   - apiCall<Body, Query, Res>(endpoint, args?): Promise<Res>  (rejects with ApiError)
  *   - class ApiError implements ApiErrorShape { status: number; detail: string; retryAfter: number | null }
