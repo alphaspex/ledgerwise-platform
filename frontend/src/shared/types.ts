@@ -1,7 +1,7 @@
 /**
  * Inputs : none (pure type declarations, no runtime code)
- * Outputs : every shared TypeScript type/interface used by the frontend (domain models, request/response bodies, query objects, context value)
- * File explanation : The single source of truth for all data shapes. Every other file imports its types from here. Shapes mirror the backend module .md files (Module 1, 2, 3). Backend note: booleans (is_admin, do_not_contact, read) are sent as true/false in JSON even though D1 stores 0/1.
+ * Outputs : every shared TypeScript type/interface used by the frontend (domain models, request/response bodies, query objects, context value, and AI usage summaries)
+ * File explanation : The single source of truth for all data shapes. Every other file imports its types from here. Shapes mirror the backend API contract. Booleans are sent as true/false in JSON even though D1 stores 0/1; AI usage cost is nullable when pricing is incomplete.
  */
 
 // ===================== primitives & enums =====================
@@ -53,6 +53,20 @@ export interface AcceptInviteRequest { email: string; code: string; new_password
 export interface InviteRequest { email: string }
 export interface AuthEventsQuery { limit?: number }
 
+// ===================== model usage =====================
+export interface ModelUsageTotals {
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  total_tokens: number;
+  cost_usd: number | null;
+  cost_complete: boolean;
+}
+export interface ModelUsageSummary extends ModelUsageTotals {
+  by_module: Record<string, ModelUsageTotals>;
+}
+
 // ===================== research (Module 1) =====================
 export interface Reason { text: string; source_url: string; quote: string }
 export interface SourceCheck { url: string; result: SourceResult; status: number | null }
@@ -84,7 +98,7 @@ export interface CompanySummary {
 }
 export interface CompanyDetail extends CompanySummary {
   run_id: number; contact_source: ContactSource | null;
-  research_data: ResearchData | null; memory: Memory | null;
+  research_data: ResearchData | null; memory: Memory | null; usage: ModelUsageSummary;
 }
 
 // ===================== outreach (Module 2) =====================
@@ -108,7 +122,7 @@ export interface ThreadSummary {
   thread_state: ThreadState; last_message_preview: string;
   last_message_sender: MessageSender; last_message_at: ISODateString;
 }
-export interface ThreadDetail { summary: ThreadSummary; messages: ThreadMessage[] }
+export interface ThreadDetail { summary: ThreadSummary; messages: ThreadMessage[]; usage: ModelUsageSummary }
 export interface HumanReplyRequest { body: string }
 
 // ===================== bookings / notifications / dashboard =====================
@@ -129,6 +143,7 @@ export interface DashboardSummary {
   conversations: { auto: number; needs_human: number; human_taken_over: number };
   bookings: { upcoming: number };
   notifications: { unread: number };
+  usage: ModelUsageSummary;
 }
 
 // ===================== generic =====================

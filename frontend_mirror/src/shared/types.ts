@@ -1,7 +1,7 @@
 /**
  * Inputs : none (pure type declarations, no runtime code)
- * Outputs : every shared TypeScript type/interface used by the frontend (domain models, request/response bodies, query objects, context value)
- * File explanation : The single source of truth for all data shapes. Every other file imports its types from here. Shapes mirror the backend module .md files (Module 1, 2, 3). Backend note: booleans (is_admin, do_not_contact, read) are sent as true/false in JSON even though D1 stores 0/1.
+ * Outputs : every shared TypeScript type/interface used by the frontend (domain models, request/response bodies, query objects, context value, and AI usage summaries)
+ * File explanation : The single source of truth for all data shapes. Every other file imports its types from here. Shapes mirror the backend API contract. Booleans are sent as true/false in JSON even though D1 stores 0/1; AI usage cost is nullable when pricing is incomplete.
  */
 
 // ===================== primitives & enums =====================

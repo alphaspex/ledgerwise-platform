@@ -5,14 +5,15 @@
  *   - usePolling(getDashboard) -> DashboardSummary (api/dashboardApi.ts)
  *   - useAuthGuard()
  * Outputs :
- *   - JSX.Element (PageHeader 'Dashboard' and four SummaryBlocks: Research (approved / pending / needs review) -> goTo('research'); Emails (pending review / sent / rejected) -> goTo('email_review'); Conversations (auto / needs human / taken over) -> goTo('conversations'); Bookings (upcoming) with unread notifications count -> goTo('bookings'); Skeleton / ErrorState)
- * File explanation : Home screen with summary numbers.
+ *   - JSX.Element (four pipeline SummaryBlocks plus AI usage totals, cost completeness, and per-module breakdown; Skeleton / ErrorState)
+ * File explanation : Home screen with pipeline counts and persisted AI usage totals.
  */
 
 import { useCallback } from 'react';
 import { CalendarDays, MailCheck, MessagesSquare, Search } from 'lucide-react';
 import { getDashboard } from '../api/dashboardApi';
 import { SummaryBlock } from '../components/features/SummaryBlock';
+import { Card } from '../components/ui/Card';
 import { PageHeader } from '../components/layout/PageHeader';
 import { ErrorState } from '../components/ui/ErrorState';
 import { Skeleton } from '../components/ui/Skeleton';
@@ -52,6 +53,10 @@ export function DashboardPage() {
   if (!summary) {
     return null;
   }
+
+  const usageCostLabel = summary.usage.cost_complete && summary.usage.cost_usd !== null
+    ? `${summary.usage.cost_usd.toFixed(6)}`
+    : 'Unavailable (pricing not set for all calls)';
 
   return (
     <div className="space-y-6">
@@ -109,6 +114,30 @@ export function DashboardPage() {
           ]}
         />
       </div>
+
+      <Card className="space-y-4">
+        <div>
+          <h2 className="text-base font-semibold text-navy">AI usage</h2>
+          <p className="text-xs text-navy-mute">Persisted model calls across all modules.</p>
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div><div className="text-xs text-navy-mute">Calls</div><div className="text-lg font-semibold text-navy">{summary.usage.calls.toLocaleString()}</div></div>
+          <div><div className="text-xs text-navy-mute">Input tokens</div><div className="text-lg font-semibold text-navy">{summary.usage.input_tokens.toLocaleString()}</div></div>
+          <div><div className="text-xs text-navy-mute">Output tokens</div><div className="text-lg font-semibold text-navy">{summary.usage.output_tokens.toLocaleString()}</div></div>
+          <div><div className="text-xs text-navy-mute">Reasoning tokens</div><div className="text-lg font-semibold text-navy">{summary.usage.reasoning_tokens.toLocaleString()}</div></div>
+          <div><div className="text-xs text-navy-mute">Total tokens</div><div className="text-lg font-semibold text-navy">{summary.usage.total_tokens.toLocaleString()}</div></div>
+          <div><div className="text-xs text-navy-mute">Estimated cost</div><div className="text-sm font-semibold text-navy">{usageCostLabel}</div></div>
+        </div>
+        <div className="space-y-2 border-t border-line pt-3">
+          <h3 className="text-sm font-semibold text-navy">By module</h3>
+          {Object.entries(summary.usage.by_module).length ? Object.entries(summary.usage.by_module).map(([module, usage]) => (
+            <div key={module} className="flex items-center justify-between gap-3 text-sm">
+              <span className="capitalize text-navy-soft">{module}</span>
+              <span className="text-navy-mute">{usage.calls.toLocaleString()} calls · {usage.total_tokens.toLocaleString()} tokens</span>
+            </div>
+          )) : <p className="text-xs text-navy-mute">No model usage recorded yet.</p>}
+        </div>
+      </Card>
     </div>
   );
 }
